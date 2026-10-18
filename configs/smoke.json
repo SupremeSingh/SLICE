@@ -1,0 +1,12 @@
+{
+  "width": 8,
+  "resnet_width": 8,
+  "epochs": 2,
+  "batch_size": 32,
+  "seeds": [7],
+  "learning_rates": [0.001],
+  "ridge_epsilon": 0.01,
+  "calibration": "platt",
+  "mode": "exploratory",
+  "test_scope": "Software smoke test, not scientific evidence."
+}

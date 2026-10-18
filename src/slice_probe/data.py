@@ -8,7 +8,7 @@ import re
 import unicodedata
 from .io import read_json,write_json,require_empty,sha256
 
-NUMBER=re.compile(r'[+-]?(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?')
+NUMBER=re.compile(r'[+-]?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?')
 
 
 def number(value):
@@ -53,7 +53,9 @@ def prepare_numina(out,counts,revision=None):
     from datasets import load_dataset
     from huggingface_hub import HfApi
     dataset='AI-MO/NuminaMath-1.5'
-    revision=revision or HfApi().dataset_info(dataset).sha
+    revision=HfApi().dataset_info(dataset, revision=revision).sha
+    if not re.fullmatch(r'[0-9a-f]{40}', revision):
+        raise ValueError('Dataset resolver did not return an immutable commit SHA')
     rows=load_dataset(dataset,split='train',revision=revision)
     selected={};excluded=Counter()
     for i,row in enumerate(rows):
@@ -74,7 +76,7 @@ def prepare_numina(out,counts,revision=None):
     for split,count in counts.items():
         questions.extend(dict(row,split=split) for _,row in ordered[cursor:cursor+count]);cursor+=count
     (out/'questions.jsonl').write_text(''.join(json.dumps(q)+'\n' for q in questions))
-    write_json(out/'selection.json',dict(dataset=dataset,revision=revision,counts=counts,eligible=len(ordered),exclusions=dict(excluded),
+    write_json(out/'selection.json',dict(dataset=dataset,revision=revision,counts=counts,eligible=len(ordered),exclusions=dict(excluded),questions_sha256=sha256(out/'questions.jsonl'),
         scope='One number-template family per question; not semantic or pretraining decontamination. New selection, not the original reported benchmark.'))
 
 
@@ -86,6 +88,30 @@ def grade(text,target):
     if number(target) is None:raise ValueError('Expected a decimal reference')
     result=dict(score=None,status='parse_failure',extracted=None)
     if len(text)>32000:return dict(result,status='input_too_long')
+    # A scalar-target task must not silently accept one of several final boxes.
+    boxes=[]
+    for match in re.finditer(r'\\(?:boxed|fbox)\s*\{',text):
+        start=match.end();depth=1
+        for i in range(start,len(text)):
+            depth+=(text[i]=='{')-(text[i]=='}')
+            if depth==0:boxes.append(text[start:i].strip());break
+        else:return dict(result,status='malformed_box')
+    if len(set(boxes))>1:return dict(result,status='ambiguous_final')
+    # Restrict this guard to explicitly announced final answers, not intermediate
+    # arithmetic in the reasoning. A list of alternatives is not a scalar answer.
+    announcements = list(re.finditer(r'\b(?:final\s+answer|answer)\s*(?:is|:|=)\s*([^\n]*)', text, re.I))
+    if announcements:
+        tail = announcements[-1].group(1).strip()
+        scalar = r'[+-]?(?:[0-9]+(?:\.[0-9]+)?)'
+        alternatives = rf'{scalar}\s*(?:,\s+|\bor\b\s*|\band\b\s*){scalar}(?![0-9])'
+        if re.search(alternatives, tail, re.I):
+            return dict(result, status='ambiguous_final')
+        # Do not accept an old boxed number when a later explicit scalar answer
+        # contradicts it. More general symbolic ambiguity remains an audit issue.
+        final_number = NUMBER.match(tail.lstrip('$ ('))
+        boxed_number = number(boxes[-1]) if boxes else None
+        if boxed_number is not None and final_number and number(final_number.group()) != boxed_number:
+            return dict(result, status='ambiguous_final')
     extraction=[LatexExtractionConfig(boxed_match_priority=0,try_extract_without_anchor=True,
         normalization_config=NormalizationConfig(basic_latex=True,units=True,malformed_operators=False,nits=False,boxed='all',equations=False)),
         ExprExtractionConfig(try_extract_without_anchor=True)]
@@ -97,6 +123,7 @@ def grade(text,target):
     except Exception as exc:return dict(result,status='parse_error',error=type(exc).__name__)
     if not prediction:return result
     if len(prediction)!=1 or isinstance(prediction[0],str):return dict(result,status='unsupported_parse')
+    if not getattr(prediction[0],'is_number',False):return dict(result,status='unsupported_parse')
     result['extracted']=str(prediction[0])
     try:
         correct=verify(Rational(str(number(target))),prediction[0],float_rounding=6,numeric_precision=15,strict=True,timeout_seconds=3,raise_on_error=True)

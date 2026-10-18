@@ -1,5 +1,8 @@
 # Protocol and artifact guide
 
+For matched runnable baselines, question-difficulty controls, calibration and locked
+confirmation, see [the reproducibility guide](REPRODUCIBILITY.md).
+
 ## Installation
 
 Install from this folder with Python 3.10+:

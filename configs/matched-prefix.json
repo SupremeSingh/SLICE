@@ -1,0 +1,12 @@
+{
+  "width": 768,
+  "resnet_width": 256,
+  "epochs": 30,
+  "batch_size": 2048,
+  "seeds": [42, 43, 44],
+  "learning_rates": [0.0003, 0.001],
+  "ridge_epsilon": 0.01,
+  "calibration": "platt",
+  "mode": "exploratory",
+  "test_scope": "Describe dataset revision, exclusions and any prior test inspection before running."
+}

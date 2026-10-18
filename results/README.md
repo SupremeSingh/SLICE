@@ -33,3 +33,13 @@ LLM, capture, transfers and I/O. Direct layer readouts were faster in this kerne
 benchmark. The sparse and plain implementations both use dense operations.
 A smaller feature vector establishes neither end-to-end speedup nor guaranteed
 probability calibration.
+
+## Reproduction versus further validation
+
+Exact historical model/dataset commits, original IDs/splits, fitted artifacts and
+individual predictions are not included in this metric export. Their absence is
+recorded in `artifact-status.json`; the table is not presented as an exact
+reproducibility release. The new `compare` workflow uses matched sampled-prefix
+training for all methods and adds carry-forward/fixed-position within-question
+controls. It produces a separately locked run and a releasable checkpoint/prediction
+bundle. Its results must remain separate from the historical all-token Ridge table.

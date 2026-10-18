@@ -70,8 +70,9 @@ def solve_ridge(a, b, epsilon):
 def fit_ridge(z, y, epsilon):
     a = torch.zeros(z.shape[1] + 1, z.shape[1] + 1, dtype=torch.float64)
     b = torch.zeros(z.shape[1] + 1, dtype=torch.float64)
-    add_statistics(a, b, z, y)
-    return solve_ridge(a, b, epsilon)
+    for start in range(0,len(y),2048):
+        add_statistics(a,b,z[start:start+2048],y[start:start+2048])
+    return solve_ridge(a,b,epsilon)
 
 
 def all_token_ridge(record, manifest, answers, device, epsilon):

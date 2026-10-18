@@ -1,0 +1,7 @@
+{
+  "scope": "Historical reported study, not a new matched-prefix comparison",
+  "available": ["aggregate metrics", "per-head aggregate metrics", "paired question intervals", "data counts", "feature and parameter dimensions"],
+  "not_bundled": ["original question IDs and split file", "exact original model commit", "exact original dataset commit", "original fitted checkpoints", "original per-prefix predictions", "original pre-test configuration lock"],
+  "exact_historical_reproduction_available": false,
+  "action": "Publish verified original artifacts as a separately versioned release before claiming exact reproduction. The standalone compare/release-bundle workflow records these artifacts for new runs; missing original values must not be guessed."
+}

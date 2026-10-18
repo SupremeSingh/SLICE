@@ -7,6 +7,7 @@ from .collection import load_split
 from .io import read_json, load_checkpoint, require_empty, write_json, sha256
 from .metrics import metrics
 from .model import predict_features
+from .diagnostics import question_carry_forward, within_question_ranking
 
 
 def metric_average(y, predictions):
@@ -35,13 +36,19 @@ def evaluate(features, probes, out, device='cpu'):
     sets = [set(d['question']) for d in (train, val, test)]
     if any(sets[i] & sets[j] for i in range(3) for j in range(i)):
         raise ValueError('Question overlap across train/validation/test')
-    selections = read_json(Path(probes) / 'selection.json')['selected']
+    selection = read_json(Path(probes) / 'selection.json')
+    manifest_hash = sha256(Path(features) / 'manifest.json')
+    if selection.get('feature_manifest_sha256') != manifest_hash:
+        raise ValueError('Training feature manifest differs from evaluation features')
+    selections = selection['selected']
     predictions, checkpoints = {}, {}
     for name, item in selections.items():
         path = Path(probes) / item['path']
         if sha256(path) != item['sha256']:
             raise ValueError('Selected checkpoint changed')
         record = load_checkpoint(path)
+        if record.get('feature_manifest_sha256') != manifest_hash:
+            raise ValueError('Checkpoint training feature manifest differs')
         if (record['layers'] != manifest['layers'] or record['rms_eps'] != manifest['rms_eps']
                 or record['model']['hashes'] != manifest['model']['hashes']):
             raise ValueError('Probe and feature encoder differ')
@@ -63,12 +70,27 @@ def evaluate(features, probes, out, device='cpu'):
                    for name,p in groups.items() if name != 'constant'}
     if 'plain' in groups and 'sparse' in groups:
         comparisons['sparse_minus_plain'] = paired_interval(test['y'], groups['sparse'], groups['plain'], test['question'])
+    carry = {name: question_carry_forward(p, test['question'], test['position'])
+             for name,p in groups.items()}
+    advancing = test['position'] > 0
+    difficulty = dict(carry_forward={name:metric_average(test['y'],p) for name,p in carry.items()},
+        updated_minus_initial={name:paired_interval(test['y'][advancing],p[:,advancing],
+            carry[name][:,advancing],test['question'][advancing]) for name,p in groups.items()}
+            if advancing.any() else {},
+        scope='Compare prefix scores with their own question-only score carried forward. '
+              'Negative paired Brier difference favors prefix information. Same outcomes and state weights.')
+    ranking_mask=np.isin(test['position'],[0,32,128])
+    ranking = {name:within_question_ranking(test['y'][ranking_mask],p[:,ranking_mask],test['question'][ranking_mask],
+        test['response'][ranking_mask],test['position'][ranking_mask]) for name,p in groups.items()}
+    ranking['scope']='Sampled-state positions only; coverage can be sparse. Use compare with fixed checkpoints for the primary test.'
     out = require_empty(out)
     write_json(out / 'summary.json', dict(results=results, by_prefix=by_prefix, comparisons=comparisons,
-        test_questions=len(sets[2]), test_prefixes=len(test['y']), checkpoints=checkpoints,
+        question_difficulty=difficulty,within_question=ranking,
+        feature_manifest_sha256=manifest_hash,test_questions=len(sets[2]), test_prefixes=len(test['y']), checkpoints=checkpoints,
         scope='Retained-answer conditional correctness prediction. Metrics average heads, not ensemble predictions. '
               'Question bootstraps are descriptive and unadjusted; head seeds share data. Raw Ridge scores are not calibrated probabilities.'))
-    np.savez_compressed(out / 'predictions.npz', **predictions, y=test['y'], question=test['question'], position=test['position'])
+    np.savez_compressed(out / 'predictions.npz', **predictions, y=test['y'], question=test['question'], position=test['position'],response=test['response'],
+        **{f'initial-{name}':p for name,p in carry.items()})
     with (out / 'metrics.csv').open('w', newline='') as stream:
         writer = csv.DictWriter(stream, fieldnames=['representation', 'accuracy', 'brier', 'auroc', 'ece', 'outside_probability_range'])
         writer.writeheader()

@@ -58,6 +58,14 @@ but the compressor has about **5.9 million**. Sparse activations do not imply fa
 execution, and these results do not establish an end-to-end inference speedup.
 [Detailed results and limitations](results/README.md) · [Machine-readable evidence](results/reported-results.json)
 
+## Reproducibility status
+
+The table above is **historical evidence, not yet an exact reproduction release**.
+Original question IDs/splits, immutable model/dataset revisions, fitted weights
+and per-prefix predictions are not bundled. [Artifact status](results/artifact-status.json)
+lists the gaps explicitly. New standalone runs now record these artifacts and
+can export a review bundle; they must be reported separately from the old table.
+
 ## Start in a few commands
 
 Python **3.10+** is required. No cluster, scheduler or account on a particular
@@ -176,6 +184,29 @@ The reference collector is simple and serial; large-N collection is expensive.
 Start small. See [the protocol and artifact guide](docs/USAGE.md) before scaling up.
 You can supply your own numeric questions using the
 [example JSONL format](examples/questions.jsonl).
+
+## Compare all probes and test beyond question difficulty
+
+After collecting answers, one command fits final-layer, two-thirds-layer and
+five-layer Ridge, the ten-layer residual probe, and plain/sparse bottleneck Ridge:
+
+```bash
+python -m slice_probe compare --answers artifacts/answers \
+  --config configs/matched-prefix.json --out artifacts/comparison
+```
+
+All methods use **identical sampled states and weights**. The command also checks
+question-only scores carried forward, ranks correct versus incorrect continuations
+of the same question at fixed token counts, calibrates on validation only, and
+locks selected artifacts before test evaluation. Outputs include a comparison
+table, per-prefix predictions, diagnostic intervals and calibration/risk data.
+Use `configs/smoke.json` for a quick software check with the bundled sample.
+
+[Reproducibility guide](docs/REPRODUCIBILITY.md) explains configuration locking,
+matched fitting versus the all-token ablation, optional decision plots, integration
+tests, and exporting checkpoints/predictions for reviewers without new generation.
+These tests can establish what prefix information adds; the historical aggregate
+table alone does not establish that claim.
 
 ## Predict from a prefix
 
