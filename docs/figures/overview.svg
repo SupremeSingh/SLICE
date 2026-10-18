@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="560" viewBox="0 0 1600 560">
+<title>SLICE: a compact readout of frozen transformer states</title>
+<desc>A question and available answer prefix enter a frozen transformer, drawn as five schematic flat layer sheets. Hidden states at the last prefix token from five selected depths are normalized and concatenated. A learned frozen projection and ReLU compress 7680 coordinates into 768 features. A Ridge linear readout yields an eventual final-answer correctness score. No future answer tokens are supplied.</desc>
+<defs><marker id="a" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#343d48"/></marker></defs>
+<rect width="1600" height="560" fill="white"/>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#252f3b}.head{font-size:21px;font-weight:600;letter-spacing:1px}.body{font-size:19px}.small{font-size:15px}.flow{stroke:#343d48;stroke-width:1.7;fill:none;marker-end:url(#a)}</style>
+<text x="173" y="187" class="head" text-anchor="middle">QUESTION + PREFIX</text>
+<text x="173" y="236" class="body" text-anchor="middle">9 AVOCADOS,</text>
+<text x="173" y="265" class="body" text-anchor="middle">3 PER SERVING?</text>
+<text x="173" y="313" class="body" text-anchor="middle" style="fill:#617386">DIVIDE 9 BY…</text>
+<path d="M290 269 H355" class="flow" stroke="#343d48" stroke-width="1.5" fill="none"/>
+<path d="M370 326 L540 296 L640 331 L470 361 Z" stroke="#7f98ae" stroke-width="1.5" fill="#f7fafd"/>
+<circle cx="417" cy="329.0" r="2.1" fill="#b8c8d5"/>
+<circle cx="459" cy="321.6" r="2.1" fill="#b8c8d5"/>
+<circle cx="501" cy="314.2" r="2.1" fill="#b8c8d5"/>
+<circle cx="543" cy="306.8" r="2.1" fill="#b8c8d5"/>
+<circle cx="583" cy="333" r="4.0" fill="#47758f"/>
+<path d="M588 333 L695 333 L735 295" stroke="#7199ad" stroke-width="1.3" fill="none"/>
+<path d="M370 278 L540 248 L640 283 L470 313 Z" stroke="#7f98ae" stroke-width="1.5" fill="#f7fafd"/>
+<circle cx="417" cy="281.0" r="2.1" fill="#b8c8d5"/>
+<circle cx="459" cy="273.6" r="2.1" fill="#b8c8d5"/>
+<circle cx="501" cy="266.2" r="2.1" fill="#b8c8d5"/>
+<circle cx="543" cy="258.8" r="2.1" fill="#b8c8d5"/>
+<circle cx="583" cy="285" r="4.0" fill="#47758f"/>
+<path d="M588 285 L695 285 L735 273" stroke="#7199ad" stroke-width="1.3" fill="none"/>
+<path d="M370 230 L540 200 L640 235 L470 265 Z" stroke="#7f98ae" stroke-width="1.5" fill="#f7fafd"/>
+<circle cx="417" cy="233.0" r="2.1" fill="#b8c8d5"/>
+<circle cx="459" cy="225.6" r="2.1" fill="#b8c8d5"/>
+<circle cx="501" cy="218.2" r="2.1" fill="#b8c8d5"/>
+<circle cx="543" cy="210.8" r="2.1" fill="#b8c8d5"/>
+<circle cx="583" cy="237" r="4.0" fill="#47758f"/>
+<path d="M588 237 L695 237 L735 251" stroke="#7199ad" stroke-width="1.3" fill="none"/>
+<path d="M370 182 L540 152 L640 187 L470 217 Z" stroke="#7f98ae" stroke-width="1.5" fill="#f7fafd"/>
+<circle cx="417" cy="185.0" r="2.1" fill="#b8c8d5"/>
+<circle cx="459" cy="177.6" r="2.1" fill="#b8c8d5"/>
+<circle cx="501" cy="170.2" r="2.1" fill="#b8c8d5"/>
+<circle cx="543" cy="162.8" r="2.1" fill="#b8c8d5"/>
+<circle cx="583" cy="189" r="4.0" fill="#47758f"/>
+<path d="M588 189 L695 189 L735 229" stroke="#7199ad" stroke-width="1.3" fill="none"/>
+<path d="M370 134 L540 104 L640 139 L470 169 Z" stroke="#7f98ae" stroke-width="1.5" fill="#f7fafd"/>
+<circle cx="417" cy="137.0" r="2.1" fill="#b8c8d5"/>
+<circle cx="459" cy="129.6" r="2.1" fill="#b8c8d5"/>
+<circle cx="501" cy="122.2" r="2.1" fill="#b8c8d5"/>
+<circle cx="543" cy="114.8" r="2.1" fill="#b8c8d5"/>
+<circle cx="583" cy="141" r="4.0" fill="#47758f"/>
+<path d="M588 141 L695 141 L735 207" stroke="#7199ad" stroke-width="1.3" fill="none"/>
+<text x="502" y="89" class="head" text-anchor="middle">FROZEN TRANSFORMER</text>
+<text x="495" y="428" class="small" text-anchor="middle">STATES AT THE LAST PREFIX TOKEN</text>
+<text x="495" y="454" class="small" text-anchor="middle" style="fill:#687480">SELECTED LAYERS SHOWN SCHEMATICALLY</text>
+<rect x="735" y="201" width="32" height="10" fill="#dbe7ee" stroke="#8ca7ba" stroke-width="0.7"/>
+<rect x="735" y="213" width="32" height="10" fill="#dbe7ee" stroke="#8ca7ba" stroke-width="0.7"/>
+<rect x="735" y="225" width="32" height="10" fill="#dbe7ee" stroke="#8ca7ba" stroke-width="0.7"/>
+<rect x="735" y="237" width="32" height="10" fill="#dbe7ee" stroke="#8ca7ba" stroke-width="0.7"/>
+<rect x="735" y="249" width="32" height="10" fill="#dbe7ee" stroke="#8ca7ba" stroke-width="0.7"/>
+<rect x="735" y="261" width="32" height="10" fill="#dbe7ee" stroke="#8ca7ba" stroke-width="0.7"/>
+<rect x="735" y="273" width="32" height="10" fill="#dbe7ee" stroke="#8ca7ba" stroke-width="0.7"/>
+<rect x="735" y="285" width="32" height="10" fill="#dbe7ee" stroke="#8ca7ba" stroke-width="0.7"/>
+<rect x="735" y="297" width="32" height="10" fill="#dbe7ee" stroke="#8ca7ba" stroke-width="0.7"/>
+<rect x="735" y="309" width="32" height="10" fill="#dbe7ee" stroke="#8ca7ba" stroke-width="0.7"/>
+<text x="752" y="120" class="small" text-anchor="middle">COMBINE</text>
+<text x="752" y="370" class="body" text-anchor="middle">7,680</text>
+<path d="M778 262 H825" class="flow" stroke="#343d48" stroke-width="1.5" fill="none"/>
+<path d="M840 202 L988 242 L988 282 L840 322 Z" stroke="#628b7d" stroke-width="1.6" fill="#f0f6f3"/>
+<text x="915" y="170" class="head" text-anchor="middle">SLICE</text>
+<text x="914" y="270" class="body" text-anchor="middle">COMPRESS</text>
+
+
+
+<path d="M999 262 H1034" class="flow" stroke="#343d48" stroke-width="1.5" fill="none"/>
+<rect x="1043" y="230" width="26" height="6" fill="#b8d4c6" stroke="#719c87" stroke-width="0.6"/>
+<rect x="1043" y="238" width="26" height="6" fill="#f7faf8" stroke="#719c87" stroke-width="0.6"/>
+<rect x="1043" y="246" width="26" height="6" fill="#b8d4c6" stroke="#719c87" stroke-width="0.6"/>
+<rect x="1043" y="254" width="26" height="6" fill="#b8d4c6" stroke="#719c87" stroke-width="0.6"/>
+<rect x="1043" y="262" width="26" height="6" fill="#f7faf8" stroke="#719c87" stroke-width="0.6"/>
+<rect x="1043" y="270" width="26" height="6" fill="#f7faf8" stroke="#719c87" stroke-width="0.6"/>
+<rect x="1043" y="278" width="26" height="6" fill="#b8d4c6" stroke="#719c87" stroke-width="0.6"/>
+<rect x="1043" y="286" width="26" height="6" fill="#f7faf8" stroke="#719c87" stroke-width="0.6"/>
+<text x="1056" y="370" class="body" text-anchor="middle">768 FEATURES</text>
+<path d="M1083 262 H1150" class="flow" stroke="#343d48" stroke-width="1.5" fill="none"/>
+<circle cx="1168" cy="234" r="3" fill="#657688"/>
+<path d="M1173 234 L1210 262" stroke="#7e8994" stroke-width="1.1" fill="none"/>
+<circle cx="1168" cy="262" r="3" fill="#657688"/>
+<path d="M1173 262 L1210 262" stroke="#7e8994" stroke-width="1.1" fill="none"/>
+<circle cx="1168" cy="290" r="3" fill="#657688"/>
+<path d="M1173 290 L1210 262" stroke="#7e8994" stroke-width="1.1" fill="none"/>
+<circle cx="1216" cy="262" r="7" fill="white" stroke="#343d48" stroke-width="1.5"/>
+<path d="M1225 262 H1290" class="flow" stroke="#343d48" stroke-width="1.5" fill="none"/>
+<text x="1198" y="192" class="small" text-anchor="middle">LINEAR</text>
+<text x="1198" y="214" class="small" text-anchor="middle">READOUT</text>
+<text x="1410" y="254" class="head" text-anchor="middle">CORRECTNESS</text>
+<text x="1410" y="283" class="head" text-anchor="middle">SCORE</text>
+<text x="1410" y="329" class="small" text-anchor="middle">FINAL OUTCOME ESTIMATE</text>
+<path d="M70 487 H1530" stroke="#d6dde3" stroke-width="1" fill="none"/>
+<text x="800" y="523" class="small" text-anchor="middle">ONLY AVAILABLE PREFIX TOKENS ARE READ. THE LLM AND LEARNED COMPRESSOR ARE FROZEN AT PREDICTION TIME.</text>
+</svg>

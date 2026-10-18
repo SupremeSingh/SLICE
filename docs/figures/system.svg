@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1200" viewBox="0 0 900 1200">
+<title>SLICE: vertical system overview for a poster column</title>
+<desc>A question and available answer prefix enter a frozen transformer. Five schematic layer sheets contribute their last-prefix-token hidden states. These states are normalized and combined into 7680 coordinates, compressed to 768 features, and passed to a linear Ridge readout to produce an eventual-correctness score. LLM and compressor weights remain frozen during prediction.</desc>
+<defs><marker id="a" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#354453"/></marker></defs>
+<rect width="900" height="1200" fill="white"/>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#263342}.head{font-size:29px;font-weight:600;letter-spacing:1px}.body{font-size:25px}.small{font-size:20px}.flow{fill:none;stroke:#354453;stroke-width:2;marker-end:url(#a)}</style>
+<text x="450" y="62" class="head" text-anchor="middle">QUESTION + PREFIX</text>
+<text x="450" y="101" class="small" text-anchor="middle">9 AVOCADOS, 3 PER SERVING?</text>
+<text x="450" y="131" class="small" text-anchor="middle" style="fill:#687784">DIVIDE 9 BY…</text>
+<path d="M450 143 V166" stroke="#354453" stroke-width="2" fill="none" marker-end="url(#a)"/>
+<text x="450" y="193" class="head" text-anchor="middle">FROZEN TRANSFORMER</text>
+<path d="M220 439 L473 403 L625 453 L372 489 Z" stroke="#8299ac" stroke-width="1.7" fill="#f6f9fc"/>
+<circle cx="287" cy="446" r="2.7" fill="#b9c9d7"/>
+<circle cx="343" cy="438" r="2.7" fill="#b9c9d7"/>
+<circle cx="399" cy="430" r="2.7" fill="#b9c9d7"/>
+<circle cx="455" cy="422" r="2.7" fill="#b9c9d7"/>
+<circle cx="552" cy="453" r="4.7" fill="#46778f"/>
+<path d="M559 453 H780 V565 H502 V592" stroke="#789bac" stroke-width="1.6" fill="none"/>
+<path d="M220 391 L473 355 L625 405 L372 441 Z" stroke="#8299ac" stroke-width="1.7" fill="#f6f9fc"/>
+<circle cx="287" cy="398" r="2.7" fill="#b9c9d7"/>
+<circle cx="343" cy="390" r="2.7" fill="#b9c9d7"/>
+<circle cx="399" cy="382" r="2.7" fill="#b9c9d7"/>
+<circle cx="455" cy="374" r="2.7" fill="#b9c9d7"/>
+<circle cx="552" cy="405" r="4.7" fill="#46778f"/>
+<path d="M559 405 H755 V565 H476 V592" stroke="#789bac" stroke-width="1.6" fill="none"/>
+<path d="M220 343 L473 307 L625 357 L372 393 Z" stroke="#8299ac" stroke-width="1.7" fill="#f6f9fc"/>
+<circle cx="287" cy="350" r="2.7" fill="#b9c9d7"/>
+<circle cx="343" cy="342" r="2.7" fill="#b9c9d7"/>
+<circle cx="399" cy="334" r="2.7" fill="#b9c9d7"/>
+<circle cx="455" cy="326" r="2.7" fill="#b9c9d7"/>
+<circle cx="552" cy="357" r="4.7" fill="#46778f"/>
+<path d="M559 357 H730 V565 H450 V592" stroke="#789bac" stroke-width="1.6" fill="none"/>
+<path d="M220 295 L473 259 L625 309 L372 345 Z" stroke="#8299ac" stroke-width="1.7" fill="#f6f9fc"/>
+<circle cx="287" cy="302" r="2.7" fill="#b9c9d7"/>
+<circle cx="343" cy="294" r="2.7" fill="#b9c9d7"/>
+<circle cx="399" cy="286" r="2.7" fill="#b9c9d7"/>
+<circle cx="455" cy="278" r="2.7" fill="#b9c9d7"/>
+<circle cx="552" cy="309" r="4.7" fill="#46778f"/>
+<path d="M559 309 H705 V565 H424 V592" stroke="#789bac" stroke-width="1.6" fill="none"/>
+<path d="M220 247 L473 211 L625 261 L372 297 Z" stroke="#8299ac" stroke-width="1.7" fill="#f6f9fc"/>
+<circle cx="287" cy="254" r="2.7" fill="#b9c9d7"/>
+<circle cx="343" cy="246" r="2.7" fill="#b9c9d7"/>
+<circle cx="399" cy="238" r="2.7" fill="#b9c9d7"/>
+<circle cx="455" cy="230" r="2.7" fill="#b9c9d7"/>
+<circle cx="552" cy="261" r="4.7" fill="#46778f"/>
+<path d="M559 261 H680 V565 H398 V592" stroke="#789bac" stroke-width="1.6" fill="none"/>
+
+<path d="M390 592 H510" stroke="#789bac" stroke-width="1.8" fill="none"/>
+<text x="450" y="626" class="head" text-anchor="middle">COMBINE STATES</text>
+<text x="450" y="661" class="body" text-anchor="middle">7,680 FEATURES</text>
+<path d="M450 681 V713" stroke="#354453" stroke-width="2" fill="none" marker-end="url(#a)"/>
+<path d="M293 731 H607 L540 833 H360 Z" stroke="#6c9482" stroke-width="1.9" fill="#f0f6f3"/>
+<text x="450" y="793" class="head" text-anchor="middle">COMPRESS</text>
+<path d="M450 834 V861" stroke="#354453" stroke-width="2" fill="none" marker-end="url(#a)"/>
+<rect x="326" y="880" width="17" height="24" fill="#b8d4c6" stroke="#789e8b" stroke-width="0.85"/>
+<rect x="347" y="880" width="17" height="24" fill="#f8fbf9" stroke="#789e8b" stroke-width="0.85"/>
+<rect x="368" y="880" width="17" height="24" fill="#b8d4c6" stroke="#789e8b" stroke-width="0.85"/>
+<rect x="389" y="880" width="17" height="24" fill="#b8d4c6" stroke="#789e8b" stroke-width="0.85"/>
+<rect x="410" y="880" width="17" height="24" fill="#f8fbf9" stroke="#789e8b" stroke-width="0.85"/>
+<rect x="431" y="880" width="17" height="24" fill="#f8fbf9" stroke="#789e8b" stroke-width="0.85"/>
+<rect x="452" y="880" width="17" height="24" fill="#b8d4c6" stroke="#789e8b" stroke-width="0.85"/>
+<rect x="473" y="880" width="17" height="24" fill="#f8fbf9" stroke="#789e8b" stroke-width="0.85"/>
+<rect x="494" y="880" width="17" height="24" fill="#b8d4c6" stroke="#789e8b" stroke-width="0.85"/>
+<rect x="515" y="880" width="17" height="24" fill="#b8d4c6" stroke="#789e8b" stroke-width="0.85"/>
+<rect x="536" y="880" width="17" height="24" fill="#f8fbf9" stroke="#789e8b" stroke-width="0.85"/>
+<rect x="557" y="880" width="17" height="24" fill="#f8fbf9" stroke="#789e8b" stroke-width="0.85"/>
+<text x="450" y="940" class="body" text-anchor="middle">768 FEATURES</text>
+<path d="M450 955 V985" stroke="#354453" stroke-width="2" fill="none" marker-end="url(#a)"/>
+<circle cx="412" cy="1006" r="3.3" fill="#657b8e"/>
+<path d="M412 1011 L450 1041" stroke="#8b98a4" stroke-width="1.2" fill="none"/>
+<circle cx="450" cy="1006" r="3.3" fill="#657b8e"/>
+<path d="M450 1011 L450 1041" stroke="#8b98a4" stroke-width="1.2" fill="none"/>
+<circle cx="488" cy="1006" r="3.3" fill="#657b8e"/>
+<path d="M488 1011 L450 1041" stroke="#8b98a4" stroke-width="1.2" fill="none"/>
+<circle cx="450" cy="1048" r="6.5" fill="white" stroke="#354453" stroke-width="1.6"/>
+<text x="530" y="1030" class="small" text-anchor="start">LINEAR READOUT</text>
+<path d="M450 1056 V1090" stroke="#354453" stroke-width="2" fill="none" marker-end="url(#a)"/>
+<text x="450" y="1131" class="head" text-anchor="middle">CORRECTNESS SCORE</text>
+<text x="450" y="1170" class="small" text-anchor="middle" style="fill:#687784">PREDICTED FINAL-ANSWER OUTCOME</text>
+</svg>

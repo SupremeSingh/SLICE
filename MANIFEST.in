@@ -1,0 +1,4 @@
+include README.md LICENSE CITATION.cff
+recursive-include docs *.md *.svg *.png
+recursive-include examples *.jsonl
+recursive-include results *.md *.json *.csv

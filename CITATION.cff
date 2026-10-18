@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "Please cite this software and the model/dataset sources used in your experiment."
+title: "SLICE: Sparse Latent Inference for Correctness Estimation"
+authors:
+  - family-names: Singh
+    given-names: Manmit
+version: 0.1.0
+date-released: 2026-10-18
+url: "https://github.com/SupremeSingh/SLICE"
+license: MIT
