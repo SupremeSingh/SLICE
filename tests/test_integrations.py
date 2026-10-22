@@ -82,3 +82,55 @@ def test_verifier_timeout_boundary(monkeypatch):
     monkeypatch.undo()
     monkeypatch.setattr(verifier,'verify',timed_out)
     assert grade(r'\boxed{3}','3')['status']=='verify_timeout'
+
+
+def test_published_resident_critic_matches_original_real_transformer_inference(tmp_path, monkeypatch):
+    transformers = pytest.importorskip('transformers')
+    tokenizers = pytest.importorskip('tokenizers')
+    from slice_probe import Critic
+    from slice_probe.inference import predict
+    from slice_probe.io import save_checkpoint
+    from slice_probe.model import Bottleneck
+    from slice_probe.registry import publish
+
+    torch.manual_seed(17)
+    config = transformers.Qwen2Config(vocab_size=512, hidden_size=24, intermediate_size=48,
+        num_hidden_layers=3, num_attention_heads=4, num_key_value_heads=2,
+        max_position_embeddings=512)
+    config._attn_implementation = 'eager'
+    lm = transformers.Qwen2ForCausalLM(config).float().eval().requires_grad_(False)
+    model = tmp_path / 'model'
+    lm.save_pretrained(model)
+    vocabulary = {char: i for i, char in enumerate(sorted(tokenizers.pre_tokenizers.ByteLevel.alphabet()))}
+    vocabulary['<|endoftext|>'] = len(vocabulary)
+    transformers.Qwen2Tokenizer(vocab=vocabulary, merges=[]).save_pretrained(model)
+    _, identity = features.model_location(str(model))
+    compressor = Bottleneck(72, 4)
+    checkpoint = tmp_path / 'probe.pt'
+    save_checkpoint(checkpoint, dict(format='slice-probe-v1', input_dim=72, width=4,
+        model=identity, layers=[3, 2, 1], rms_eps=config.rms_norm_eps,
+        mean=torch.zeros(72), scale=torch.ones(72), state=compressor.state_dict(),
+        weights=torch.randn(5, dtype=torch.float64)))
+    artifact = publish(checkpoint, tmp_path / 'registry', 'random-test')
+    critic = Critic.load(artifact, device='cpu')
+    state = dict(state_id='s', question='t1 t2', prefix='t3 t4')
+    expected = predict(checkpoint, state['question'], state['prefix'])['score']
+    assert critic.score_batch([state])[0]['raw_value'] == pytest.approx(expected, abs=1e-7)
+    ids = critic._tokens(state)
+    exact = dict(token_ids=ids, tokenizer_id=critic.tokenizer_id)
+    np.testing.assert_array_equal(critic.encode_batch([state]), critic.encode_batch([exact]))
+    assert not lm.training and not critic.encoder.training
+    if pytest.importorskip('math_verify'):
+        from slice_probe import preflight
+        from slice_probe.requests import TrainingRequest
+        from slice_probe.registry import canonical_hash
+        monkeypatch.setattr(preflight, 'load_model', lambda *a, **kw: (
+            critic.encoder, critic.tokenizer, identity))
+        request = TrainingRequest.parse(dict(dataset='owner/test', layer_base=1,
+            num_slices=3, max_new_tokens=16))
+        bundle = dict(request_hash=canonical_hash(request.to_dict()))
+        preflight.smoke(tmp_path / 'smoke', request, bundle, 'cpu', {})
+        report = preflight.check_gate(tmp_path / 'smoke/report.json', bundle, {})
+        assert report['layers'] == [3, 2, 1] and report['passed']
+        with pytest.raises(ValueError, match='does not match'):
+            preflight.check_gate(tmp_path / 'smoke/report.json', {'request_hash': 'changed'}, {})

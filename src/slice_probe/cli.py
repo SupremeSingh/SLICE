@@ -93,13 +93,57 @@ def parser():
     verify = sub.add_parser('verify-bundle', help='Recompute a released comparison table without model inference')
     verify.add_argument('--bundle', type=Path, required=True)
     verify.add_argument('--out', type=Path, required=True)
+    publish = sub.add_parser('publish', help='Publish an immutable supervised critic artifact')
+    publish.add_argument('--checkpoint', type=Path, required=True)
+    publish.add_argument('--registry', type=Path, required=True)
+    publish.add_argument('--version', required=True)
+    for field in ('calibration', 'evaluation', 'feature-manifest', 'statistics', 'trajectory-manifest'):
+        publish.add_argument('--' + field, type=Path)
+    inspect = sub.add_parser('inspect', help='Verify and inspect a published artifact')
+    inspect.add_argument('--artifact', type=Path, required=True)
+    for name in ('score-batch', 'encode-batch'):
+        batch = sub.add_parser(name, help='Use one resident critic on a JSON list of states')
+        batch.add_argument('--artifact', type=Path, required=True)
+        batch.add_argument('--input', type=Path, required=True)
+        batch.add_argument('--out', type=Path, required=True)
+        batch.add_argument('--device', default='auto')
+        if name == 'score-batch':
+            batch.add_argument('--calibrated', action='store_true')
+    trajectories = sub.add_parser('extract-trajectories', help='Extract complete training episodes for optional LSTD')
+    for field in ('checkpoint', 'answers', 'feature-manifest', 'out'):
+        trajectories.add_argument('--' + field, type=Path, required=True)
+    trajectories.add_argument('--device', default='auto')
+    lstd = sub.add_parser('fit-lstd', help='Fit LSTD(lambda) without changing the frozen representation')
+    for field in ('checkpoint', 'trajectories', 'feature-manifest', 'out'):
+        lstd.add_argument('--' + field, type=Path, required=True)
+    lstd.add_argument('--trace-lambda', type=float, default=.9)
+    lstd.add_argument('--discount-gamma', type=float, default=1.)
+    lstd.add_argument('--regularization', type=float, default=.01)
+    jobs = sub.add_parser('jobs', help='Operator review, approval and Slurm reconciliation')
+    jobs.add_argument('--config', type=Path, required=True)
+    actions = jobs.add_subparsers(dest='action', required=True)
+    create = actions.add_parser('create')
+    create.add_argument('--request', type=Path, required=True)
+    create.add_argument('--project', required=True)
+    create.add_argument('--idempotency-key', required=True)
+    actions.add_parser('list')
+    for name in ('show', 'approve', 'refresh', 'cancel'):
+        action = actions.add_parser(name)
+        action.add_argument('--id', required=True)
+    worker = sub.add_parser('job-run', help='Run a prepared job inside its compute allocation')
+    worker.add_argument('--job', type=Path, required=True)
+    worker.add_argument('--device', default='auto')
     return p
 
 
 def main():
     args = parser().parse_args()
+    import os
     import torch
-    torch.set_num_threads(8)
+    threads = int(os.environ.get('SLICE_NUM_THREADS', '8'))
+    if threads < 1:
+        raise ValueError('SLICE_NUM_THREADS must be positive')
+    torch.set_num_threads(threads)
     if hasattr(args, 'device'):
         from .features import resolve_device
         args.device = resolve_device(args.device)
@@ -158,3 +202,62 @@ def main():
     elif args.command == 'verify-bundle':
         from .comparison import verify_bundle
         verify_bundle(args.bundle,args.out)
+    elif args.command == 'publish':
+        from .registry import publish
+        print(publish(args.checkpoint, args.registry, args.version,
+                      calibration=args.calibration, evaluation=args.evaluation,
+                      feature_manifest=args.feature_manifest, statistics=args.statistics,
+                      trajectory_manifest=args.trajectory_manifest))
+    elif args.command == 'inspect':
+        from .registry import inspect_artifact
+        print(json.dumps(inspect_artifact(args.artifact), indent=2))
+    elif args.command in ('score-batch', 'encode-batch'):
+        from .critic import Critic
+        from .io import read_json, write_json
+        critic = Critic.load(args.artifact, device=args.device)
+        states = read_json(args.input)
+        if not isinstance(states, list):
+            raise ValueError('--input must contain a JSON list of state objects')
+        if args.command == 'score-batch':
+            write_json(args.out, critic.score_batch(states, return_calibrated_probability=args.calibrated))
+        else:
+            import numpy as np
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            with args.out.open('wb') as stream:
+                np.save(stream, critic.encode_batch(states))
+            write_json(args.out.with_suffix('.json'), dict(feature_id=critic.feature_id,
+                critic_version=critic.version, state_ids=[s.get('state_id') for s in states]))
+    elif args.command == 'extract-trajectories':
+        from .lstd import extract_trajectories
+        extract_trajectories(args.checkpoint, args.answers, args.out, args.device,
+                             feature_manifest=args.feature_manifest)
+    elif args.command == 'fit-lstd':
+        from .lstd import fit_lstd
+        print(fit_lstd(args.checkpoint, args.trajectories, args.feature_manifest, args.out,
+                       trace_lambda=args.trace_lambda, discount_gamma=args.discount_gamma,
+                       regularization=args.regularization))
+    elif args.command == 'jobs':
+        from .jobs import JobStore
+        from .slurm import settings, Slurm
+        from .io import read_json
+        from .requests import TrainingRequest
+        config = settings(args.config)
+        store, scheduler = JobStore(config['database']), Slurm(config)
+        if args.action == 'create':
+            result = store.create(args.project, args.idempotency_key, read_json(args.request))
+        elif args.action == 'list':
+            result = store.list()
+        elif args.action == 'show':
+            result = store.get(args.id)
+            result['preview'] = TrainingRequest.parse(result['request']).preview()
+            result['launch'] = scheduler.plan(result)
+        elif args.action == 'approve':
+            result = scheduler.approve(store, args.id)
+        elif args.action == 'refresh':
+            result = scheduler.refresh(store, args.id)
+        else:
+            result = scheduler.cancel(store, args.id)
+        print(json.dumps(result, indent=2))
+    elif args.command == 'job-run':
+        from .worker import run_job
+        run_job(args.job, device=args.device)

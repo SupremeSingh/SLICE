@@ -1,6 +1,6 @@
 include README.md LICENSE CITATION.cff
 recursive-include docs *.md *.svg *.png
-recursive-include examples *.jsonl
+recursive-include examples *.jsonl *.json
 recursive-include results *.md *.json *.csv
 
 recursive-include configs *.json

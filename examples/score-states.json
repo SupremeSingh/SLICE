@@ -1,0 +1,12 @@
+[
+  {
+    "state_id": "avocados-initial",
+    "question": "There are 9 avocados and each serving needs 3. How many servings can be made?",
+    "prefix": ""
+  },
+  {
+    "state_id": "avocados-prefix",
+    "question": "There are 9 avocados and each serving needs 3. How many servings can be made?",
+    "prefix": "Each serving needs 3, so divide 9 by"
+  }
+]

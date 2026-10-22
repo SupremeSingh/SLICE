@@ -157,6 +157,9 @@ python -m slice_probe layers --num-layers 28 --layer-base 2 --num-slices 5
 
 ## Further reading
 
+For shared artifacts, resident batch scoring, approved Slurm training jobs and
+optional LSTD(lambda), see the [library and private API guide](docs/API.md).
+
 - Zhu et al., [The LLM Already Knows](https://arxiv.org/abs/2509.12886).
 - Azaria & Mitchell, [The Internal State of an LLM Knows When It's Lying](https://arxiv.org/abs/2304.13734).
 - Kadavath et al., [Language Models (Mostly) Know What They Know](https://arxiv.org/abs/2207.05221).
