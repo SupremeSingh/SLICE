@@ -1,0 +1,16 @@
+{
+  "database": "/absolute/local/path/slice-service/jobs.sqlite",
+  "registry": "/absolute/local/path/slice-critics",
+  "ssh_host": "duke-cs",
+  "cluster_root": "/usr/xtmp/ms785/slice-service",
+  "cluster_registry": "/usr/xtmp/ms785/slice-critics",
+  "cluster_source": "/usr/xtmp/ms785/SLICE/src",
+  "cluster_python": "/usr/xtmp/ms785/SLICE/.venv-native/bin/python",
+  "partition": "compsci-gpu",
+  "account": null,
+  "gres": "gpu:a5000:1",
+  "cpus": 8,
+  "memory_gb": 64,
+  "max_total_minutes": 1440,
+  "device": "auto"
+}

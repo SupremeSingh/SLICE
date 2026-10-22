@@ -105,7 +105,7 @@ responsibility and does not modify registry artifacts.
 
 For this user's Duke CS cluster, start with the
 [CS cluster profile and runbook](DUKE_CS.md). It includes the observed partition,
-typed A5000 request and container launch; the generic example below is optional.
+typed A5000 request and native Python launch; the generic example below is optional.
 
 Run the control service on your computer. Install the same checkout and model,
 dataset and verifier dependencies in the cluster environment too. No training

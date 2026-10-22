@@ -164,6 +164,26 @@ def test_cs_cluster_plan_uses_typed_gpu_container_snapshot_and_exact_arguments(c
         validate_settings(dict(cfg, container_image=None))
 
 
+def test_native_cs_profile_launches_project_python_without_container(config):
+    from pathlib import Path
+    import shlex
+    from slice_probe.io import read_json
+
+    _, local = config
+    profile = Path(__file__).resolve().parents[1] / 'configs/service.duke-cs.native.example.json'
+    cfg = read_json(profile)
+    cfg['database'] = local['database']
+    store = JobStore(cfg['database'])
+    job = store.create('project', 'native', dict(dataset='owner/data'))
+    plan = Slurm(cfg).plan(job)
+    command = shlex.split(plan['script'].splitlines()[-1])
+    assert command[:4] == ['exec', 'srun', '--ntasks=1', 'env']
+    assert '/usr/xtmp/ms785/SLICE/.venv-native/bin/python' in command
+    assert not {'apptainer', 'singularity', '--nv', '--bind'} & set(command)
+    assert '--gres=gpu:a5000:1' in plan['sbatch']
+    assert plan['bundle']['execution']['container_image'] is None
+
+
 def test_source_snapshot_and_logs_are_prepared_before_submission(config, monkeypatch):
     _, cfg = config
     cfg.update(cluster_source='/cluster/SLICE/src', gres='gpu:a5000:1')

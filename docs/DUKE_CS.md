@@ -18,31 +18,43 @@ df -h /usr/xtmp/ms785
 ```
 
 Use login nodes only for editing, light inspection and submission. Install or
-build substantial dependencies inside a compute allocation. Use the Python
-environment created for your pinned container, and never modify a shared
-environment while jobs use it. SLICE itself requests only one GPU.
+build substantial dependencies inside a compute allocation. The preferred setup
+is now a dedicated native environment at `SLICE/.venv-native`; it does not use a
+container. Existing jobs and their environments stay unchanged. SLICE requests
+only one GPU for training.
+
+Before choosing native Python/PyTorch packages, inspect a CPU compute node:
+
+```bash
+cd /usr/xtmp/ms785/SLICE
+mkdir -p logs
+sbatch scripts/inspect-native.sbatch
+```
+
+Read `logs/slice-native-inspect-JOB_ID.out` after completion. The script only
+reports the native Python/packages and loaded modules; it installs nothing and
+does not touch other projects. CUDA availability must later be verified in a GPU
+allocation. If submission times out, reconcile the job named
+`slice-native-inspect` in `squeue`/`sacct` before retrying.
 
 ## Configure the controller on your computer
 
 ```bash
 mkdir -p artifacts
-cp configs/service.duke-cs.example.json artifacts/service.json
+cp configs/service.duke-cs.native.example.json artifacts/service.json
 ```
 
 Fill in:
 
 - Local `database` and `registry` paths.
 - Your existing SSH alias in `ssh_host`; the example's `duke-cs` is a placeholder.
-- The pinned `.sif` path and its matching environment's Python executable.
-- `container_runtime`: `apptainer` or `singularity`, whichever is installed.
-- Binds covering the job workspace, source, image, environment, caches and registry.
-  The image must also be readable inside the container for checksum verification.
+- The native environment's Python executable in `cluster_python`. The example
+  uses `/usr/xtmp/ms785/SLICE/.venv-native/bin/python`.
 - `account` only if your normal CS jobs require an explicit account. Otherwise,
   leave it null to use your configured Slurm default.
 
 The observed `/usr/project/xtmp/ms785` path may refer to the same storage as
-`/usr/xtmp/ms785`; confirm path accessibility inside the container. Do not change
-the scientific configuration to work around a missing bind.
+`/usr/xtmp/ms785`; use consistent paths in the native environment and configuration.
 
 Install this SLICE revision and optional model/data/verifier dependencies in that
 environment once, from a compute allocation. The [API guide](API.md) covers the
@@ -67,13 +79,13 @@ python -m slice_probe jobs --config artifacts/service.json refresh --id JOB_ID
 
 Approval copies the small `src/slice_probe` package into the job directory,
 creates the log directory before `sbatch`, and writes a strict Bash script.
-The script uses `srun`, the configured container's `--nv`, explicit binds and
-Python path, and thread counts matching the requested CPUs. No dependency
+The native script uses `srun`, the explicit environment Python path and thread
+counts matching the requested CPUs. No dependency
 installation or model inference takes place on the login node.
 
 Before dataset processing, a compute-node smoke check verifies the actual GPU,
 model context, resolved layers, causal features and Math-Verify. Its result is
-tied to the request, source hashes, packages and container checksum. Later stages
+tied to the request, source hashes and packages. Later stages
 refuse a mismatched gate. Collection uses the exact smoke-tested model revision.
 The smoke report is preserved in the published critic metadata.
 
@@ -100,3 +112,10 @@ command; do not use a blanket user-wide cancellation.
 Completed stage hashes support safe requeue recovery. Preserve failed outputs and
 wait for cancellation cleanup before changing environments. Source snapshots,
 published critics and reports should be backed up separately from `/usr/xtmp`.
+
+## Optional existing container support
+
+`configs/service.duke-cs.example.json` retains the older Apptainer/Singularity
+profile for experiments that explicitly need it. Set the image, runtime, matching
+Python environment and binds there; that mode also records the image checksum.
+It is not needed for the native setup above.

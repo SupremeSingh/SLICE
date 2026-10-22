@@ -4,3 +4,4 @@ recursive-include examples *.jsonl *.json
 recursive-include results *.md *.json *.csv
 
 recursive-include configs *.json
+recursive-include scripts *.sbatch
