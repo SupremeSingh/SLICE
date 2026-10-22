@@ -37,6 +37,30 @@ does not touch other projects. CUDA availability must later be verified in a GPU
 allocation. If submission times out, reconcile the job named
 `slice-native-inspect` in `squeue`/`sacct` before retrying.
 
+## Validate the native environment
+
+After installing dependencies, submit CPU tests and a separate brief GPU check
+from the checkout containing the installed environment:
+
+```bash
+cd /usr/xtmp/ms785/SLICE
+mkdir -p logs
+sbatch scripts/test-native.sbatch
+sbatch scripts/check-gpu-native.sbatch
+```
+
+The CPU job writes each test name and memory usage to
+`logs/slice-native-tests-JOB_ID.out`. It copies only package sources for the
+standalone test, excludes runtime environments and caches, and keeps temporary
+test files on working storage. The GPU job checks PyTorch and a small CUDA
+calculation in `logs/slice-native-gpu-check-JOB_ID.out`; it downloads no models.
+Neither job changes the environment or other running jobs.
+
+Check both returned IDs with `sacct` and read their logs. Require `COMPLETED`
+and `0:0` for both jobs before proceeding. If submission times out, reconcile
+the corresponding job name before retrying. A host-memory OOM or time limit
+does not establish a CUDA or SLICE training failure.
+
 ## Configure the controller on your computer
 
 ```bash

@@ -157,14 +157,50 @@ def test_complete_training_evaluation_and_frozen_selection(tmp_path):
     for key in a['state']:torch.testing.assert_close(a['state'][key],b['state'][key],rtol=0,atol=0)
 
 
+def copy_standalone_sources(project, destination):
+    """Copy the runtime package and metadata, never a development environment.
+
+    Native environments and download caches can occupy many GB. In particular,
+    copying artifacts/ can recurse into the destination when pytest's basetemp
+    is inside that directory. An allowlist avoids walking any runtime storage.
+    """
+    destination.mkdir()
+    shutil.copytree(project/'src', destination/'src',
+                    ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '*.pyo', '*.egg-info'))
+    for name in ('pyproject.toml', 'README.md', 'LICENSE', 'MANIFEST.in', 'CITATION.cff'):
+        path = project/name
+        if path.is_file():
+            shutil.copy2(path, destination/name)
+
+
 def test_standalone_copy_has_no_parent_imports(tmp_path):
     project=Path(__file__).resolve().parents[1]
-    copied=tmp_path/'independent';shutil.copytree(project,copied,ignore=shutil.ignore_patterns('__pycache__','.pytest_cache','*.egg-info'))
+    copied=tmp_path/'independent'
+    copy_standalone_sources(project, copied)
     env=dict(os.environ,PYTHONPATH=str(copied/'src'))
     result=subprocess.run([sys.executable,'-m','slice_probe','--help'],cwd=tmp_path,env=env,text=True,capture_output=True,check=True)
     assert 'prepare-numina' in result.stdout and 'predict' in result.stdout
     for path in (copied/'src').rglob('*.py'):
         assert 'math_rl' not in path.read_text()
+
+
+def test_standalone_copy_does_not_traverse_environments_or_test_output(tmp_path):
+    project = tmp_path/'checkout'
+    package = project/'src/slice_probe'
+    package.mkdir(parents=True)
+    (package/'__init__.py').write_text('__version__ = "test"\n')
+    (project/'pyproject.toml').write_text('[project]\nname = "slice-probe"\n')
+    for name in ('.venv-native', '.venv-bootstrap', 'artifacts', 'models', 'data', '.git'):
+        runtime = project/name
+        runtime.mkdir()
+        # Walking this excluded directory would fail without allocating a huge
+        # test fixture. It represents inaccessible caches/external environments.
+        (runtime/'unavailable-cache').symlink_to(tmp_path/'missing-cache')
+    copied = project/'artifacts/pytest/independent'
+    copied.parent.mkdir()
+    copy_standalone_sources(project, copied)
+    assert (copied/'src/slice_probe/__init__.py').read_text() == '__version__ = "test"\n'
+    assert {p.name for p in copied.iterdir()} == {'src', 'pyproject.toml'}
 
 
 def test_configurable_layer_selection():
