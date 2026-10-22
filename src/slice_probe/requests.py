@@ -1,7 +1,7 @@
 """Bounded supervised training requests, independent of the HTTP transport."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, fields, replace
 import math
 import re
 
@@ -17,14 +17,17 @@ class TrainingRequest:
     dataset_split: str = 'train'
     revision: str | None = None
     max_questions: int = 1000
-    responses_per_question: int = 4
-    max_new_tokens: int = 1024
+    responses_per_question: int = 8
+    max_new_tokens: int = 3584
+    generation_seed: int = 271828
     layer_base: float = 2.
     num_slices: int = 5
     compression_width: int = 768
     epochs: int = 30
     seed: int = 42
+    training_seeds: tuple[int, ...] | None = None
     head: str = 'ridge'
+    ridge_states: str = 'all-training-tokens'
     trace_lambda: float = .9
     discount_gamma: float = 1.
     regularization: float = .01
@@ -48,10 +51,10 @@ class TrainingRequest:
         for name in ('dataset_config', 'revision'):
             if getattr(request, name) is not None and not isinstance(getattr(request, name), str):
                 raise ValueError(f'{name} must be a string')
-        bounds = dict(max_questions=(10, 1000), responses_per_question=(2, 4),
+        bounds = dict(max_questions=(10, 1000), responses_per_question=(2, 8),
                       max_new_tokens=(1, 3584), num_slices=(1, 28),
                       compression_width=(1, 768), epochs=(1, 30),
-                      seed=(0, 2**31 - 1), wall_minutes=(1, 1440))
+                      seed=(0, 2**31 - 1), generation_seed=(0, 2**31 - 1), wall_minutes=(1, 1440))
         for name, (low, high) in bounds.items():
             value = getattr(request, name)
             if type(value) is not int or not low <= value <= high:
@@ -63,6 +66,16 @@ class TrainingRequest:
         geometric_layers(28, request.layer_base, request.num_slices)
         if request.head not in ('ridge', 'lstd'):
             raise ValueError('head must be ridge or lstd')
+        if request.ridge_states not in ('sampled', 'all-training-tokens'):
+            raise ValueError('ridge_states must be sampled or all-training-tokens')
+        seeds = request.training_seeds
+        if seeds is None:
+            seeds = tuple(request.seed + i for i in range(3))
+        if (not isinstance(seeds, (list, tuple)) or not 1 <= len(seeds) <= 3
+                or any(type(s) is not int or not 0 <= s < 2**31 for s in seeds)
+                or len(set(seeds)) != len(seeds) or seeds[0] != request.seed):
+            raise ValueError('training_seeds must contain 1–3 unique integer seeds, starting with seed')
+        request = replace(request, training_seeds=tuple(seeds))
         if not 0 <= request.trace_lambda <= 1 or not 0 <= request.discount_gamma <= 1:
             raise ValueError('lambda and gamma must be in [0, 1]')
         if request.regularization <= 0:
@@ -75,7 +88,9 @@ class TrainingRequest:
         return request
 
     def to_dict(self):
-        return asdict(self)
+        result = asdict(self)
+        result['training_seeds'] = list(self.training_seeds) if self.training_seeds is not None else None
+        return result
 
     def preview(self):
         layers = geometric_layers(28, self.layer_base, self.num_slices)
@@ -85,5 +100,8 @@ class TrainingRequest:
                     max_generated_answers=self.max_questions * self.responses_per_question,
                     max_generated_tokens=self.max_questions * self.responses_per_question * self.max_new_tokens,
                     wall_minutes=self.wall_minutes, head=self.head,
+                    generation_seed=self.generation_seed, training_seeds=self.training_seeds,
+                    ridge_states=self.ridge_states if self.head == 'ridge' else 'complete-token LSTD',
+                    dataset_recipe='prepare-numina' if self.dataset == 'AI-MO/NuminaMath-1.5' else 'generic-scalar',
                     target='verified final-answer correctness',
-                    note='Pilot limits bound work, not prediction accuracy. Approval is required.')
+                    note='Pilot limits bound work, not prediction accuracy. Submit explicitly authorizes compute.')

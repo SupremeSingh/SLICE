@@ -47,6 +47,17 @@ def select_questions(rows, request):
 
 
 def prepare_dataset(request, out):
+    if request.dataset == 'AI-MO/NuminaMath-1.5':
+        if (request.question_column != 'problem' or request.reference_column != 'answer'
+                or request.dataset_split != 'train' or request.dataset_config is not None):
+            raise ValueError('The original Numina recipe requires problem/answer columns and the train split without a config')
+        # Delegate rather than duplicate: metadata filters, boxed-reference
+        # validation, full eligible-family scan and slice-v1 ordering stay exact.
+        from .data import prepare_numina
+        train = int(request.max_questions * .7)
+        val = max(1, int(request.max_questions * .15))
+        return prepare_numina(out, dict(train=train, val=val,
+                              test=request.max_questions - train - val), request.revision)
     from datasets import load_dataset
     from huggingface_hub import HfApi
 

@@ -4,13 +4,16 @@
   "reference_column": "answer",
   "dataset_split": "train",
   "max_questions": 100,
-  "responses_per_question": 4,
-  "max_new_tokens": 512,
+  "responses_per_question": 8,
+  "max_new_tokens": 3584,
+  "generation_seed": 271828,
   "layer_base": 2,
   "num_slices": 5,
   "compression_width": 768,
   "epochs": 30,
   "seed": 42,
+  "training_seeds": [42, 43, 44],
   "head": "ridge",
-  "wall_minutes": 240
+  "ridge_states": "all-training-tokens",
+  "wall_minutes": 720
 }

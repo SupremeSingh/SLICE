@@ -3,7 +3,7 @@ import shutil
 
 import pytest
 
-from slice_probe import collection, comparison, datasets, preflight, data
+from slice_probe import collection, comparison, datasets, preflight, data, training
 from slice_probe.io import read_json, write_json
 from slice_probe.registry import canonical_hash, inspect_artifact
 from slice_probe.requests import TrainingRequest
@@ -30,12 +30,15 @@ def test_training_to_publication_resumes_without_duplicate_collection(fitted, tm
         (out / 'questions.jsonl').write_text(''.join(json.dumps(q) + '\n' for q in questions))
 
     def collect(questions, out, *args):
+        assert args[-3:] == (request.responses_per_question, request.max_new_tokens,
+                            request.generation_seed)
         collected.append('collected')
         shutil.copytree(answers, out)
 
     monkeypatch.setattr(datasets, 'prepare_dataset', prepare)
     monkeypatch.setattr(collection, 'collect', collect)
     monkeypatch.setattr(preflight, 'load_model', collection.load_model)
+    monkeypatch.setattr(training, 'load_model', collection.load_model)
     monkeypatch.setattr(data, 'grade', lambda *args: dict(status='correct'))
     original = comparison.evaluate_comparison
 
@@ -52,6 +55,9 @@ def test_training_to_publication_resumes_without_duplicate_collection(fitted, tm
     assert collected == ['collected']
     status = read_json(root / 'status.json')
     assert status['status'] == 'completed'
+    assert read_json(root / 'comparison-config.json')['seeds'] == [7, 8, 9]
+    if head == 'ridge':
+        assert status['evaluation']['head_training_distribution'] == 'all-training-tokens'
     manifest = inspect_artifact(status['artifact_path'])
     assert manifest['head']['method'] == head
     assert manifest['features']['layers'] == [2]

@@ -178,17 +178,27 @@ operator action that allocates compute; creating a request never submits work.
 Initial dataset/split validation occurs on the compute worker after approval;
 the operator should review the dataset and columns before submitting.
 
-The example is a new 100-question pilot, not a reproduction run. Ingestion accepts
-scalar decimal references, excludes obvious unsupported tasks and duplicate
-number-template families, then assigns 70/15/15 family-separated splits. Dataset
-revisions are pinned. It scans at most 100,000 rows and never executes remote
-dataset scripts. Invalid/insufficient datasets fail explicitly.
+The example is a new 100-question pilot with 70/15/15 splits. Numina delegates
+directly to the original `prepare-numina` implementation: verified, nonsynthetic
+`cn_k12` word problems, matching single boxed references, family deduplication,
+the full eligible-family scan and `slice-v1` ordering. Other datasets retain the
+generic scalar-reference selector with a 100,000-row scan limit. Revisions are
+pinned; invalid/insufficient datasets fail explicitly.
 
 Training reuses `fit_comparison`: all matched baselines, a supervised sparse
 compressor, validation-only choices, and the existing pre-test lock. The selected
-head also receives validation-only calibration before its test evaluation. Both
+Ridge head is refitted with the original `all_token_ridge` after the compressor
+is frozen, as in `train --answers`. The sampled comparison checkpoints remain
+immutable and separately labeled. The selected head receives validation-only
+calibration before its test evaluation. Both
 its results and comparison baselines are reported. The preset runs all matched
 arms, so its compute cost exceeds fitting a single head.
+Collection defaults match `collect`: eight responses, 3,584 new tokens and seed
+271828. Compressor fitting defaults to three seeds (42/43/44), with the first
+seed's sparse compressor published as the resident critic; comparison metrics
+still report every seed. The example allows twelve hours. `generation_seed`,
+`training_seeds` and `ridge_states` are explicit request fields; choosing
+`ridge_states: sampled` requests the separately labeled sampled-prefix ablation.
 An allocation-local smoke gate runs before dataset processing. It records the
 actual model, layer selection, source, packages and optional container checksum;
 training refuses a mismatched gate even without scheduler dependencies.

@@ -83,9 +83,12 @@ use `--state-dir` to select another node-local directory if needed. Existing
 configuration is reused. There is no SSH hop or persistent server.
 
 `submit` explicitly authorizes compute and submits one GPU job. The example
-requests 100 questions, four responses each, at most 512 generated tokens per
-response, base 2, five layers and a Ridge head. It reserves one A5000, 64 GB RAM
-and up to four hours. Edit the request before submitting to choose another
+requests 100 questions selected by the original `prepare-numina` recipe, eight
+responses each and at most 3,584 generated tokens per response. It uses generation
+seed 271828, training seeds 42/43/44, base 2, five layers, width 768 and an
+all-training-token Ridge head. It reserves one A5000, 64 GB RAM and up to twelve
+hours. The smaller 70/15/15 question counts bound this pilot; selection filters
+and ordering are the original implementation. Edit the request to choose another
 dataset, budget, or head. Repeating the same key and request returns the existing
 attempt, including failed and uncertain attempts; it never launches a retry.
 Changed requests require a new key. Concurrent requests still respect the single

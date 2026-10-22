@@ -11,7 +11,7 @@ from threading import Timer
 
 import numpy as np
 
-from .io import load_checkpoint, read_json, sha256, write_json
+from .io import load_checkpoint, read_json, sha256, write_json, save_checkpoint
 from .jobs import now
 from .registry import canonical_hash, inspect_artifact, publish
 from .requests import TrainingRequest
@@ -59,6 +59,14 @@ def fit_optional_head(out, fitted, features, answers, request, device):
 
     out.mkdir()
     checkpoint = fitted / 'slice' / f'sparse-seed{request.seed}.pt'
+    if request.head == 'ridge' and request.ridge_states == 'all-training-tokens':
+        from .training import all_token_ridge
+        record = load_checkpoint(checkpoint)
+        record['weights'], record['fit_checks'] = all_token_ridge(
+            record, read_json(features / 'manifest.json'), answers, device, request.regularization)
+        record['ridge_states'] = 'all-training-tokens'
+        checkpoint = out / 'ridge.pt'
+        save_checkpoint(checkpoint, record)
     if request.head == 'lstd':
         cache = extract_trajectories(checkpoint, answers, out / 'trajectories', device,
                                      feature_manifest=features / 'manifest.json')
@@ -124,8 +132,8 @@ def evaluate_selected(out, selected, features, comparison_report, device):
         within_question=within,
         head_training_distribution=record.get('ridge_states'),
         baseline_training_distribution='matched sampled prefixes',
-        scope='New pilot, conditional on verifiable answers. LSTD uses complete-token trajectories; '
-              'baseline fitting distributions differ. Raw values and calibrated probabilities are distinct.'))
+        scope='New pilot, conditional on verifiable answers. Selected all-token Ridge or LSTD fitting '
+              'differs from matched sampled-prefix baselines. Raw values and calibrated probabilities are distinct.'))
 
 
 def run_job(path, *, device='auto'):
@@ -193,14 +201,14 @@ def run_job(path, *, device='auto'):
             questions = execute('questions', lambda out: prepare_dataset(request, out))
             answers = execute('answers', lambda out: collect(
                 questions / 'questions.jsonl', out, 'Qwen/Qwen2.5-Math-1.5B', smoke_report['model']['revision'],
-                device, request.responses_per_question, request.max_new_tokens, request.seed))
+                device, request.responses_per_question, request.max_new_tokens, request.generation_seed))
             if read_json(answers / 'manifest.json')['model'] != smoke_report['model']:
                 raise ValueError('Collected encoder identity differs from the smoke-tested encoder')
             features = execute('features', lambda out: extract(
                 answers, out, device, request.layer_base, request.num_slices,
                 baselines=True, checkpoints=[0, 32, 128]))
             write_json(root / 'comparison-config.json', dict(
-                width=request.compression_width, epochs=request.epochs, seeds=[request.seed],
+                width=request.compression_width, epochs=request.epochs, seeds=list(request.training_seeds),
                 ridge_epsilon=request.regularization, mode='exploratory',
                 test_scope='New API pilot; freshness is not established by automatic splitting.'))
             fitted = execute('fitted', lambda out: fit_comparison(

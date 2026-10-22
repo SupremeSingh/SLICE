@@ -40,6 +40,59 @@ def test_request_bounds_and_family_splits():
     assert len({row['id'] for row in a}) == 10
 
 
+def test_original_recipe_request_defaults_and_seed_bounds():
+    from slice_probe.collection import collect
+    from slice_probe.training import fit
+    import inspect
+
+    request = TrainingRequest.parse(dict(dataset='AI-MO/NuminaMath-1.5'))
+    original = inspect.signature(collect).parameters
+    assert request.responses_per_question == original['responses'].default
+    assert request.max_new_tokens == original['max_new_tokens'].default
+    assert request.generation_seed == original['seed'].default
+    assert request.training_seeds == inspect.signature(fit).parameters['seeds'].default
+    assert request.ridge_states == 'all-training-tokens'
+    assert TrainingRequest.parse(request.to_dict()) == request
+    assert request.preview()['dataset_recipe'] == 'prepare-numina'
+    for seeds in ([42, 42], [43], [True], [], [42, 43, 44, 45]):
+        with pytest.raises(ValueError, match='training_seeds'):
+            TrainingRequest.parse(dict(dataset='owner/data', training_seeds=seeds))
+
+
+def test_managed_numina_selection_is_identical_to_original(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import sys
+    from slice_probe.data import prepare_numina
+    from slice_probe.datasets import prepare_dataset
+    from slice_probe.io import read_json
+
+    rows = []
+    for name in ('Alder', 'Birch', 'Cedar', 'Dogwood', 'Elm', 'Fir', 'Ginkgo',
+                 'Hazel', 'Ivy', 'Juniper', 'Kapok', 'Larch', 'Maple', 'Oak', 'Pine'):
+        rows.append(dict(problem=f'{name} has 2 apples. How many apples?',
+                         answer='2', solution=r'The result is \boxed{2}.',
+                         source='cn_k12', synthetic=False, question_type='math-word-problem',
+                         problem_is_valid='Yes', solution_is_valid='Yes'))
+    for changes in (dict(source='other'), dict(synthetic=True), dict(problem_is_valid='No'),
+                    dict(solution_is_valid='No'), dict(question_type='proof'),
+                    dict(solution=r'\boxed{3}'), dict(problem='Find all possible values.')):
+        rows.insert(0, dict(rows[-1], **changes))
+    revision = 'a' * 40
+    monkeypatch.setitem(sys.modules, 'datasets', SimpleNamespace(load_dataset=lambda *a, **kw: rows))
+    monkeypatch.setitem(sys.modules, 'huggingface_hub', SimpleNamespace(
+        HfApi=lambda: SimpleNamespace(dataset_info=lambda *a, **kw: SimpleNamespace(sha=revision))))
+    original, managed = tmp_path / 'original', tmp_path / 'managed'
+    prepare_numina(original, dict(train=7, val=1, test=2), revision)
+    request = TrainingRequest.parse(dict(dataset='AI-MO/NuminaMath-1.5', max_questions=10,
+                                         revision=revision))
+    prepare_dataset(request, managed)
+    assert (original / 'questions.jsonl').read_bytes() == (managed / 'questions.jsonl').read_bytes()
+    assert read_json(original / 'selection.json') == read_json(managed / 'selection.json')
+    with pytest.raises(ValueError, match='original Numina recipe'):
+        prepare_dataset(TrainingRequest.parse(dict(request.to_dict(), dataset_split='test')),
+                        tmp_path / 'invalid')
+
+
 def test_idempotency_atomic_reservation_and_budget(config):
     path, cfg = config
     store = JobStore(cfg['database'])
