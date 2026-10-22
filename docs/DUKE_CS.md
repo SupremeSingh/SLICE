@@ -61,7 +61,57 @@ and `0:0` for both jobs before proceeding. If submission times out, reconcile
 the corresponding job name before retrying. A host-memory OOM or time limit
 does not establish a CUDA or SLICE training failure.
 
-## Configure the controller on your computer
+## Submit directly from Duke
+
+Log in normally with `ssh ms785@login.cs.duke.edu`. Run these commands at the
+login prompt, using the already installed native environment:
+
+```bash
+cd /usr/xtmp/ms785/SLICE
+source .venv-native/bin/activate
+python -m slice_probe jobs --config artifacts/cluster-service.json init-cluster
+python -m slice_probe jobs --config artifacts/cluster-service.json submit \
+  --request configs/training.example.json --project slice-pilot \
+  --idempotency-key native-pilot-001
+```
+
+`init-cluster` records the current Python executable, source checkout and login
+hostname. It creates a private SQLite ledger in `/var/tmp/slice-controller-UID`
+on that host, with jobs and critics under sibling `slice-service` and
+`slice-critics` directories on working storage. `/var/tmp` must be node-local;
+use `--state-dir` to select another node-local directory if needed. Existing
+configuration is reused. There is no SSH hop or persistent server.
+
+`submit` explicitly authorizes compute and submits one GPU job. The example
+requests 100 questions, four responses each, at most 512 generated tokens per
+response, base 2, five layers and a Ridge head. It reserves one A5000, 64 GB RAM
+and up to four hours. Edit the request before submitting to choose another
+dataset, budget, or head. Repeating the same key and request returns the existing
+attempt, including failed and uncertain attempts; it never launches a retry.
+Changed requests require a new key. Concurrent requests still respect the single
+active-job slot and cumulative allowance.
+
+Save the returned `id` (SLICE request) and `scheduler_id` (Slurm job). To monitor:
+
+```bash
+python -m slice_probe jobs --config artifacts/cluster-service.json refresh --id JOB_ID
+python -m slice_probe jobs --config artifacts/cluster-service.json list
+```
+
+You may disconnect while training runs. Reconnect to the controller hostname
+printed during initialization for subsequent controller commands. Configuration
+rejects another host or a missing ledger rather than silently resetting job and
+budget history. Node-local storage is not a durable backup: preserve the ledger
+when the controller is idle; if lost, reconcile scheduler jobs and recover state
+before submitting again. Shared request/status files and published artifacts
+remain in the job workspace and registry.
+
+From another project, use the absolute configuration and request paths. For
+example, the same command works in `/usr/xtmp/ms785/rl_ms_project` with
+`--config /usr/xtmp/ms785/SLICE/artifacts/cluster-service.json` and an absolute
+`--request` path. Install SLICE in that project's environment before calling it.
+
+## Optional controller on your computer
 
 ```bash
 mkdir -p artifacts
@@ -84,7 +134,7 @@ Install this SLICE revision and optional model/data/verifier dependencies in tha
 environment once, from a compute allocation. The [API guide](API.md) covers the
 library and installation commands.
 
-## Review before submission
+## Optional separate review and approval
 
 ```bash
 python -m slice_probe jobs --config artifacts/service.json create \

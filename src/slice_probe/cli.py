@@ -119,13 +119,17 @@ def parser():
     lstd.add_argument('--trace-lambda', type=float, default=.9)
     lstd.add_argument('--discount-gamma', type=float, default=1.)
     lstd.add_argument('--regularization', type=float, default=.01)
-    jobs = sub.add_parser('jobs', help='Operator review, approval and Slurm reconciliation')
+    jobs = sub.add_parser('jobs', help='Operator submission and Slurm reconciliation')
     jobs.add_argument('--config', type=Path, required=True)
     actions = jobs.add_subparsers(dest='action', required=True)
-    create = actions.add_parser('create')
-    create.add_argument('--request', type=Path, required=True)
-    create.add_argument('--project', required=True)
-    create.add_argument('--idempotency-key', required=True)
+    init = actions.add_parser('init-cluster', help='Configure native Duke submission on this login host')
+    init.add_argument('--state-dir', type=Path, help='Node-local ledger directory (default: /var/tmp/slice-controller-UID)')
+    for name in ('create', 'submit'):
+        create = actions.add_parser(name, help='Record a request' if name == 'create' else
+                                    'Create and submit once; this command authorizes compute')
+        create.add_argument('--request', type=Path, required=True)
+        create.add_argument('--project', required=True)
+        create.add_argument('--idempotency-key', required=True)
     actions.add_parser('list')
     for name in ('show', 'approve', 'refresh', 'cancel'):
         action = actions.add_parser(name)
@@ -237,6 +241,10 @@ def main():
                        trace_lambda=args.trace_lambda, discount_gamma=args.discount_gamma,
                        regularization=args.regularization))
     elif args.command == 'jobs':
+        if args.action == 'init-cluster':
+            from .controller import init_cluster
+            print(json.dumps(init_cluster(args.config, state_dir=args.state_dir), indent=2))
+            return
         from .jobs import JobStore
         from .slurm import settings, Slurm
         from .io import read_json
@@ -245,6 +253,8 @@ def main():
         store, scheduler = JobStore(config['database']), Slurm(config)
         if args.action == 'create':
             result = store.create(args.project, args.idempotency_key, read_json(args.request))
+        elif args.action == 'submit':
+            result = scheduler.submit(store, args.project, args.idempotency_key, read_json(args.request))
         elif args.action == 'list':
             result = store.list()
         elif args.action == 'show':

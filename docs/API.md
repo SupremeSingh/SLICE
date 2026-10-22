@@ -1,7 +1,8 @@
 # Shared critics and private training jobs
 
 SLICE now provides a resident Python scorer, an immutable artifact registry, and
-an optional private API for operator-approved Slurm training. The original
+an optional private API for Slurm training. Operators can submit directly;
+requests from API clients retain a separate approval step. The original
 feature extraction, sampled-prefix training, Ridge equations and comparison
 commands are unchanged. LSTD(lambda) is an opt-in readout over frozen features.
 
@@ -107,7 +108,12 @@ For this user's Duke CS cluster, start with the
 [CS cluster profile and runbook](DUKE_CS.md). It includes the observed partition,
 typed A5000 request and native Python launch; the generic example below is optional.
 
-Run the control service on your computer. Install the same checkout and model,
+For direct Duke use, run `jobs --config artifacts/cluster-service.json init-cluster`
+from the installed checkout on a login host, then use `submit` as shown below.
+The [Duke guide](DUKE_CS.md#submit-directly-from-duke) covers node-local state and
+reconnection. No SSH automation or running server is required.
+
+Alternatively, run the controller on your computer. Install the same checkout and model,
 dataset and verifier dependencies in the cluster environment too. No training
 runs on a login node. Review your normal Slurm script to choose account,
 partition, resources and any required environment/module setup.
@@ -139,7 +145,7 @@ and cancelled work. This is not measured billing. One job may be active globally
 uncertain submissions also hold that slot. Raise the allowance deliberately in
 the settings when needed. Do not keep SQLite on an NFS/Lustre filesystem.
 
-## 5. Request, review, approve
+## 5. Submit a training request
 
 No API or running server is needed for a first cluster trial:
 
@@ -151,6 +157,21 @@ python -m slice_probe jobs --config artifacts/service.json show --id JOB_ID
 python -m slice_probe jobs --config artifacts/service.json approve --id JOB_ID
 python -m slice_probe jobs --config artifacts/service.json refresh --id JOB_ID
 ```
+
+For a trusted operator, combine creation and approval in one explicit command:
+
+```bash
+python -m slice_probe jobs --config artifacts/cluster-service.json submit \
+  --request configs/training.example.json --project my-project \
+  --idempotency-key first-pilot
+```
+
+`submit` authorizes compute immediately. Repeating the same project, key and
+request returns the existing attempt without another submission, including when
+the submission outcome is unknown. Changed requests with the same key fail.
+Resource bounds, the single active-job slot, source snapshots and cumulative
+budget reservations apply to both submission paths. API clients still create
+requests awaiting operator approval.
 
 `show` previews resolved blocks and maximum workload. `approve` is the explicit
 operator action that allocates compute; creating a request never submits work.

@@ -6,6 +6,8 @@ from pathlib import PurePosixPath
 import re
 import shlex
 import subprocess
+import socket
+from pathlib import Path
 from datetime import datetime, timedelta
 
 from .io import read_json
@@ -17,7 +19,14 @@ class SubmissionUnknown(RuntimeError):
 
 
 def settings(path):
-    return validate_settings(read_json(path))
+    config = validate_settings(read_json(path))
+    if config.get('controller_host') and config['controller_host'] != socket.gethostname():
+        raise ValueError(f"Reconnect to controller host {config['controller_host']}; "
+                         'do not initialize a second ledger to retry a submission')
+    if config.get('require_existing_database') and not Path(config['database']).is_file():
+        raise ValueError('Controller ledger is missing; reconcile existing Slurm jobs and '
+                         'recover the ledger before submitting more work')
+    return config
 
 
 def validate_settings(value):
@@ -65,6 +74,24 @@ def validate_settings(value):
 class Slurm:
     def __init__(self, config):
         self.config = validate_settings(config)
+
+    def submit(self, store, project, key, request):
+        """An operator's explicit submission is approval; retries reuse the job.
+
+        Reservation remains transactional. A concurrent caller that loses the
+        reservation returns the existing job without attempting another sbatch.
+        Failed or uncertain attempts require reconciliation, never auto-retry.
+        """
+        job = store.create(project, key, request)
+        if job['status'] != 'awaiting_approval':
+            return job
+        try:
+            return self.approve(store, job['id'])
+        except ValueError:
+            current = store.get(job['id'])
+            if current['status'] != 'awaiting_approval':
+                return current
+            raise
 
     def command(self, arguments, *, stdin=None, timeout=30):
         if self.config.get('ssh_host'):

@@ -93,6 +93,120 @@ def test_submission_timeout_is_not_retried_and_can_be_reconciled(config, monkeyp
     assert scheduler.cancel(store, job['id'])['status'] == 'cancelling'
 
 
+def test_direct_submit_reuses_attempts_and_preserves_limits(config, monkeypatch):
+    _, cfg = config
+    store, scheduler = JobStore(cfg['database']), Slurm(cfg)
+    submitted = []
+
+    def command(args, **kwargs):
+        if args[0] == 'sbatch':
+            submitted.append(args)
+            raise subprocess.TimeoutExpired('sbatch', 30)
+        return ''
+
+    monkeypatch.setattr(scheduler, 'command', command)
+    request = dict(dataset='owner/data')
+    first = scheduler.submit(store, 'project', 'pilot', request)
+    assert first['status'] == 'submission_unknown'
+    assert scheduler.submit(store, 'project', 'pilot', request) == first
+    assert len(submitted) == 1
+    with pytest.raises(ValueError, match='another request'):
+        scheduler.submit(store, 'project', 'pilot', dict(request, num_slices=3))
+    with pytest.raises(ValueError, match='active'):
+        scheduler.submit(store, 'project', 'second', request)
+    store.update(first['id'], 'completed', detail={'reserved': True})
+    scheduler.config['max_total_minutes'] = first['request']['wall_minutes']
+    with pytest.raises(ValueError, match='allowance'):
+        scheduler.submit(store, 'project', 'second', request)
+    assert len(submitted) == 1
+
+
+def test_concurrent_direct_submit_calls_sbatch_once(config, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    _, cfg = config
+    store, scheduler = JobStore(cfg['database']), Slurm(cfg)
+    barrier, submitted = Barrier(2), []
+    create = store.create
+
+    def simultaneous_create(*args):
+        job = create(*args)
+        barrier.wait(timeout=10)
+        return job
+
+    def command(args, **kwargs):
+        if args[0] == 'sbatch':
+            submitted.append(args)
+            return '1234\n'
+        return ''
+
+    monkeypatch.setattr(store, 'create', simultaneous_create)
+    monkeypatch.setattr(scheduler, 'command', command)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: scheduler.submit(
+            store, 'project', 'same', dict(dataset='owner/data')), range(2)))
+    assert results[0]['id'] == results[1]['id']
+    assert len(submitted) == 1
+    assert store.get(results[0]['id'])['scheduler_id'] == '1234'
+
+
+def test_cluster_init_pins_host_and_refuses_missing_ledger(tmp_path, monkeypatch):
+    from slice_probe.controller import init_cluster
+    from slice_probe.slurm import settings
+    import socket
+
+    checkout = tmp_path / 'SLICE'
+    (checkout / 'src/slice_probe').mkdir(parents=True)
+    path = checkout / 'artifacts/cluster-service.json'
+    state = tmp_path / 'node-local'
+    cfg = init_cluster(path, state_dir=state, checkout=checkout)
+    assert not cfg.get('ssh_host')
+    assert cfg['controller_host'] == socket.gethostname()
+    assert cfg['cluster_source'] == str(checkout / 'src')
+    assert cfg['gres'] == 'gpu:a5000:1'
+    assert state.stat().st_mode & 0o777 == 0o700
+    store = JobStore(cfg['database'])
+    job = store.create('project', 'pilot', dict(dataset='owner/data'))
+    assert init_cluster(path, checkout=checkout) == cfg
+    assert store.get(job['id'])['status'] == 'awaiting_approval'
+    monkeypatch.setattr(socket, 'gethostname', lambda: 'another-login-host')
+    with pytest.raises(ValueError, match='Reconnect'):
+        settings(path)
+    monkeypatch.setattr(socket, 'gethostname', lambda: cfg['controller_host'])
+    from pathlib import Path
+    Path(cfg['database']).unlink()
+    with pytest.raises(ValueError, match='ledger is missing'):
+        init_cluster(path, checkout=checkout)
+
+
+def test_direct_submit_cli_dispatches_without_ssh(config, monkeypatch, capsys):
+    from slice_probe.cli import main
+    import sys
+
+    path, cfg = config
+    request_path = path.parent / 'request.json'
+    write_json(request_path, dict(dataset='owner/data'))
+    submitted = []
+
+    def command(self, args, **kwargs):
+        if args[0] == 'sbatch':
+            submitted.append(args)
+            return '5678\n'
+        return ''
+
+    monkeypatch.setattr(Slurm, 'command', command)
+    monkeypatch.setattr(sys, 'argv', ['slice-probe', 'jobs', '--config', str(path),
+        'submit', '--request', str(request_path), '--project', 'project',
+        '--idempotency-key', 'pilot'])
+    main()
+    first = json.loads(capsys.readouterr().out)
+    main()
+    assert json.loads(capsys.readouterr().out) == first
+    assert first['scheduler_id'] == '5678' and first['status'] == 'queued'
+    assert len(submitted) == 1
+
+
 def test_api_requests_require_auth_and_cannot_approve_or_cross_projects(config):
     pytest.importorskip('fastapi')
     pytest.importorskip('httpx')
