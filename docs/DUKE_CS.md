@@ -187,6 +187,24 @@ Completed stage hashes support safe requeue recovery. Preserve failed outputs an
 wait for cancellation cleanup before changing environments. Source snapshots,
 published critics and reports should be backed up separately from `/usr/xtmp`.
 
+## Repair an incompatible dataset runtime
+
+With NumPy 1.26.4, use the data extra's pinned PyArrow 23.0.1. A newer Arrow
+build may import-fail despite `pip check` passing. The managed smoke gate now
+checks actual NumPy/Arrow/datasets interoperability before loading Qwen.
+
+Once all jobs using `.venv-native` have stopped, submit this CPU-only repair:
+
+```bash
+mkdir -p logs
+sbatch scripts/repair-native-data.sbatch
+```
+
+It replaces only PyArrow, records before/after packages, and runs the dataset
+runtime checks. Require `COMPLETED`, `0:0` and the validation-passed log message
+before submitting a new training request with a new idempotency key. Preserve
+the old failed request and outputs. No GPU check or NumPy/Torch upgrade is needed.
+
 ## Optional existing container support
 
 `configs/service.duke-cs.example.json` retains the older Apptainer/Singularity

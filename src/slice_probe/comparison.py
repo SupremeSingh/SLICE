@@ -40,7 +40,7 @@ def configuration(path=None):
 
 def environment():
     packages={}
-    for name in ('numpy','torch','transformers','datasets','math-verify','slice-probe'):
+    for name in ('numpy','torch','transformers','datasets','pyarrow','math-verify','slice-probe'):
         try:packages[name]=version(name)
         except PackageNotFoundError:packages[name]=None
     return dict(python=platform.python_version(),platform=platform.platform(),packages=packages,

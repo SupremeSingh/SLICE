@@ -20,10 +20,22 @@ def execution_identity(bundle):
     return execution
 
 
+def check_data_runtime():
+    """Exercise NumPy/Arrow/datasets interoperability without network access."""
+    import pyarrow as pa
+    from datasets import Dataset
+
+    values = np.array([1, 2], dtype=np.int64)
+    dataset = Dataset(pa.table({'value': pa.array(values)}))
+    if dataset[:]['value'] != [1, 2]:
+        raise ValueError('NumPy/Arrow/datasets runtime check failed')
+
+
 def smoke(out, request, bundle, device, execution):
     """Exercise the actual encoder, selected blocks and verifier before collection."""
     from .data import grade
 
+    check_data_runtime()
     if execution.get('gres') and not str(device).startswith('cuda'):
         raise ValueError('Allocated GPU is unavailable; check the container runtime and --nv')
     model, tokenizer, identity = load_model('Qwen/Qwen2.5-Math-1.5B', device=device)

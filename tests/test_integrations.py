@@ -8,6 +8,31 @@ from slice_probe import collection, features
 from slice_probe.io import write_json
 
 
+def test_dataset_runtime_numpy_arrow_compatibility():
+    from importlib.util import find_spec
+    from slice_probe.preflight import check_data_runtime
+
+    if find_spec('datasets') is None:
+        pytest.skip('Install the data extra to exercise the dataset runtime')
+    # An installed but broken dependency must fail, not become an optional skip.
+    check_data_runtime()
+
+
+def test_data_runtime_failure_precedes_model_loading(tmp_path, monkeypatch):
+    from slice_probe import preflight
+
+    def broken_runtime():
+        raise ImportError('incompatible Arrow runtime')
+
+    def unexpected_model(*args, **kwargs):
+        pytest.fail('Model loading must follow the dataset runtime check')
+
+    monkeypatch.setattr(preflight, 'check_data_runtime', broken_runtime)
+    monkeypatch.setattr(preflight, 'load_model', unexpected_model)
+    with pytest.raises(ImportError, match='incompatible Arrow'):
+        preflight.smoke(tmp_path, None, {}, 'cpu', {})
+
+
 def test_real_three_block_transformer_causality_and_extraction(tmp_path):
     transformers=pytest.importorskip('transformers')
     tokenizers=pytest.importorskip('tokenizers')
@@ -121,6 +146,9 @@ def test_published_resident_critic_matches_original_real_transformer_inference(t
     np.testing.assert_array_equal(critic.encode_batch([state]), critic.encode_batch([exact]))
     assert not lm.training and not critic.encoder.training
     if pytest.importorskip('math_verify'):
+        from importlib.util import find_spec
+        if find_spec('datasets') is None:
+            pytest.skip('Install the data extra for the managed smoke check')
         from slice_probe import preflight
         from slice_probe.requests import TrainingRequest
         from slice_probe.registry import canonical_hash
