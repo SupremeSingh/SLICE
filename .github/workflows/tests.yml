@@ -25,5 +25,5 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-      - run: python -m pip install -e '.[dev,models,verify]'
+      - run: python -m pip install -e '.[dev,models,data,verify]'
       - run: python -m pytest tests/test_integrations.py -q

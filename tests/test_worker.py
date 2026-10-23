@@ -37,6 +37,9 @@ def test_training_to_publication_resumes_without_duplicate_collection(fitted, tm
 
     monkeypatch.setattr(datasets, 'prepare_dataset', prepare)
     monkeypatch.setattr(collection, 'collect', collect)
+    # This test supplies saved data and a toy encoder; real optional data-runtime
+    # imports are exercised by test_integrations with the data extra installed.
+    monkeypatch.setattr(preflight, 'check_data_runtime', lambda: None)
     monkeypatch.setattr(preflight, 'load_model', collection.load_model)
     monkeypatch.setattr(training, 'load_model', collection.load_model)
     monkeypatch.setattr(data, 'grade', lambda *args: dict(status='correct'))
