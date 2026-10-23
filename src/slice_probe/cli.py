@@ -148,6 +148,11 @@ def parser():
     parity.add_argument('--device', default='auto')
     parity.add_argument('--rtol', type=float, default=1e-5)
     parity.add_argument('--atol', type=float, default=1e-6)
+    original = sub.add_parser('import-original', help='Publish existing original sparse-study weights without retraining')
+    for name in ('study', 'model', 'registry', 'out'):
+        original.add_argument('--' + name, type=Path, required=True)
+    original.add_argument('--prefix', help='Artifact prefix (default: original-sparseWIDTH)')
+    original.add_argument('--samples', type=int, default=512)
     return p
 
 
@@ -312,3 +317,7 @@ def main():
             numerical_matches=report['numerical_matches'], provenance_matches=report['provenance_matches']), indent=2))
         if not report['matches']:
             raise SystemExit(1)
+    elif args.command == 'import-original':
+        from .original import import_original
+        print(json.dumps(import_original(args.study, args.model, args.registry, args.out,
+            prefix=args.prefix, samples=args.samples), indent=2))

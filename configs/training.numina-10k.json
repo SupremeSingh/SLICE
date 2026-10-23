@@ -1,0 +1,19 @@
+{
+  "dataset": "AI-MO/NuminaMath-1.5",
+  "max_questions": 13000,
+  "train_questions": 10000,
+  "validation_questions": 1000,
+  "test_questions": 2000,
+  "responses_per_question": 8,
+  "max_new_tokens": 3584,
+  "generation_seed": 271828,
+  "layer_base": 2,
+  "num_slices": 5,
+  "compression_width": 768,
+  "epochs": 30,
+  "seed": 42,
+  "training_seeds": [42, 43, 44],
+  "head": "ridge",
+  "ridge_states": "all-training-tokens",
+  "wall_minutes": 1440
+}

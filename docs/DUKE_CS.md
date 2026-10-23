@@ -5,6 +5,36 @@ This profile uses the user's observed **CS cluster** settings: login hosts
 and one A5000 requested as `--gres=gpu:a5000:1`. These are not live availability
 checks or defaults for other Duke clusters.
 
+## Use the existing original SLICE
+
+The original 768-wide study is
+`/usr/xtmp/ms785/rl_ms_project/outputs/numina-sparse-768-v1`, using source data
+under `outputs/jlens-large-numina-v2` in that project. To serve those trained
+features and scores, import its existing compressor and all-token Ridge weights
+instead of launching another training request:
+
+```bash
+cd /usr/xtmp/ms785/SLICE
+mkdir -p logs
+sbatch scripts/import-original-native.sbatch
+```
+
+This CPU job checks the original protocol, selected checkpoints, fitted-head
+checksums, model/tokenizer assets, question/prompt snapshot and saved test cache.
+It validates converted predictions on 512 evenly spaced original test rows per
+seed before publishing any heads. It performs no generation, fitting, relabeling
+or modification of original files. Validation details are in
+`artifacts/original-import-JOB_ID/validation.json`; the log lists published paths.
+The upstream model revision is not guessed: local original assets remain pinned
+by their saved SHA256 hashes. Existing registry versions are never overwritten.
+
+All three original seeds are published as `original-sparse768-seed42`,
+`original-sparse768-seed43` and `original-sparse768-seed44`. Load the desired
+artifact with `Critic.load(registry='/usr/xtmp/ms785/slice-critics',
+version='original-sparse768-seed42', device='cuda:0')` in a consuming compute job.
+Raw Ridge values remain raw; no new probability calibration is invented.
+The historical three-head average is separate from any single published head.
+
 ## Check the cluster
 
 After logging in through your working SSH connection:
@@ -181,14 +211,41 @@ scheduler records do not release that hold automatically. If restore refuses a
 stale snapshot, recover a newer ledger and reconcile with Slurm; do not delete
 the configuration, create a new ledger, or retry with a new key to bypass it.
 
-Managed requests cap questions at 1,000 and allow one active job per ledger.
-These are service-pilot limits, not historical study sizes. Only collection
+Managed requests default to 1,000 questions and allow one active job per ledger.
+Research requests can opt into 13,000 total questions with explicit split sizes
+and an increased controller `max_questions` limit. Only collection
 resumes within a stage, from complete per-question files. Feature extraction,
 compressor fitting, all-token Ridge, evaluation and publishing restart an
 unfinished stage; completed stages are reused only after checksum checks.
 Requeues retain the original deadline, and failed/cancelled attempts retain
 their full requested GPU-minute reservation. Use standalone commands for larger
 studies; resource changes require deliberate planning.
+
+## Full-size training and layer selection
+
+`layer_base` and `num_slices` already configure layers counted from the end.
+For 28 blocks, base 2 with five slices resolves to blocks `[28,27,25,21,13]`;
+base 3 with three slices resolves to `[28,26,20]`. Base 1 uses consecutive final
+blocks by convention. Invalid combinations fail rather than duplicate blocks.
+Changing the resolved blocks requires a new feature cache and compressor.
+
+The full training preset `configs/training.numina-10k.json` explicitly selects
+10,000 training, 1,000 validation and 2,000 test questions, eight responses each,
+and the original 30 epochs and three seeds. The operator example
+`configs/service.duke-cs.research.example.json` raises total question capacity to
+13,000, RAM to 96 GB and the cumulative allowance to 43,200 reserved GPU-minutes
+(30 one-GPU days). This is a proposed upper bound, not a reservation or runtime
+estimate. Preserve the existing ledger and host when updating settings.
+
+Do not submit this full preset to the current serial collector merely by
+increasing its allowance: each request still has a 24-hour ceiling and requeues
+retain their deadline. The original study used batched generation and sharded
+statistics. Prefer the saved original 10k-question data; fresh large generation
+needs a bounded stage/shard execution plan. Check partition limits first:
+
+```bash
+sinfo -p compsci-gpu -o "%P %l %G"
+```
 
 ## Optional controller on your computer
 

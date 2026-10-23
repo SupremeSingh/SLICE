@@ -17,6 +17,9 @@ class TrainingRequest:
     dataset_split: str = 'train'
     revision: str | None = None
     max_questions: int = 1000
+    train_questions: int | None = None
+    validation_questions: int | None = None
+    test_questions: int | None = None
     responses_per_question: int = 8
     max_new_tokens: int = 3584
     generation_seed: int = 271828
@@ -51,7 +54,7 @@ class TrainingRequest:
         for name in ('dataset_config', 'revision'):
             if getattr(request, name) is not None and not isinstance(getattr(request, name), str):
                 raise ValueError(f'{name} must be a string')
-        bounds = dict(max_questions=(10, 1000), responses_per_question=(2, 8),
+        bounds = dict(max_questions=(10, 13000), responses_per_question=(2, 8),
                       max_new_tokens=(1, 3584), num_slices=(1, 28),
                       compression_width=(1, 768), epochs=(1, 30),
                       seed=(0, 2**31 - 1), generation_seed=(0, 2**31 - 1), wall_minutes=(1, 1440))
@@ -59,6 +62,12 @@ class TrainingRequest:
             value = getattr(request, name)
             if type(value) is not int or not low <= value <= high:
                 raise ValueError(f'{name} must be an integer in [{low}, {high}]')
+        counts = (request.train_questions, request.validation_questions, request.test_questions)
+        if any(n is not None for n in counts):
+            if any(type(n) is not int or n < 1 for n in counts) or sum(counts) != request.max_questions:
+                raise ValueError('Explicit train/validation/test counts must be positive integers summing to max_questions')
+        elif request.max_questions > 1000:
+            raise ValueError('Research runs above 1,000 questions require explicit train/validation/test counts')
         for name in ('layer_base', 'trace_lambda', 'discount_gamma', 'regularization'):
             value = getattr(request, name)
             if type(value) not in (int, float) or not math.isfinite(value):
@@ -92,11 +101,18 @@ class TrainingRequest:
         result['training_seeds'] = list(self.training_seeds) if self.training_seeds is not None else None
         return result
 
+    def split_counts(self):
+        if self.train_questions is not None:
+            return dict(train=self.train_questions, val=self.validation_questions, test=self.test_questions)
+        train, val = int(self.max_questions * .7), max(1, int(self.max_questions * .15))
+        return dict(train=train, val=val, test=self.max_questions - train - val)
+
     def preview(self):
         layers = geometric_layers(28, self.layer_base, self.num_slices)
         return dict(model='Qwen/Qwen2.5-Math-1.5B', layers=layers,
                     input_width=1536 * len(layers), compression_width=self.compression_width,
                     max_questions=self.max_questions,
+                    split_counts=self.split_counts(),
                     max_generated_answers=self.max_questions * self.responses_per_question,
                     max_generated_tokens=self.max_questions * self.responses_per_question * self.max_new_tokens,
                     wall_minutes=self.wall_minutes, head=self.head,

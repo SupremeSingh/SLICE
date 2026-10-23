@@ -169,13 +169,25 @@ and cancelled work. This is not measured billing. One job may be active globally
 uncertain submissions also hold that slot. Raise the allowance deliberately in
 the settings when needed. Do not keep SQLite on an NFS/Lustre filesystem.
 
-Managed requests are a bounded pilot service: **10–1,000 questions**, 2–8 answers
+Managed requests default to a bounded pilot service: **10–1,000 questions**, 2–8 answers
 per question, at most 3,584 new tokens, up to three training seeds, 30 epochs,
 width 768, and 1–1,440 requested minutes. There is one active job **per ledger**,
 including uncertain submissions, with a default cumulative allowance of 1,440
 reserved minutes. These limits do not describe the earlier large studies or
-restrict unrelated Slurm jobs. Larger studies use the standalone preparation,
-collection and training commands with explicit resource planning.
+restrict unrelated Slurm jobs. Research requests support up to **13,000 total
+questions**, with explicit `train_questions`, `validation_questions` and
+`test_questions` summing to `max_questions`, and an operator `max_questions`
+setting raised above the default 1,000. The full Numina preset is
+`configs/training.numina-10k.json`: 10,000/1,000/2,000 questions. The research
+service example proposes a 43,200-minute cumulative reservation allowance and
+96 GB RAM. Keep the existing database, host and history when updating limits;
+do not initialize a new controller or overwrite working settings with a template.
+
+The 24-hour per-request limit remains. These configuration changes do not add
+batched generation, generation arrays, partial feature extraction, or training
+checkpoints. A fresh full-size serial run may exceed that limit. Reuse original
+saved data or implement bounded resumable stages before submitting the full
+preset. Confirm the cluster's partition time limits first.
 
 Recovery reuses only completed stages with matching checksums. Collection can
 resume from complete per-question answer batches; an interrupted question's batch

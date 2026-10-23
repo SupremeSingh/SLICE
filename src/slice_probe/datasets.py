@@ -39,8 +39,9 @@ def select_questions(rows, request):
         raise ValueError(f'Only {len(selected)} eligible unique questions; requested {request.max_questions}')
     ordered = sorted(selected.items(), key=lambda item: hashlib.sha256(
         f'slice-api-v1:{request.seed}:{item[0]}'.encode()).hexdigest())
-    train_end = int(len(ordered) * .7)
-    val_end = train_end + max(1, int(len(ordered) * .15))
+    counts = request.split_counts()
+    train_end = counts['train']
+    val_end = train_end + counts['val']
     questions = [dict(row, split='train' if i < train_end else 'val' if i < val_end else 'test')
                  for i, (_, row) in enumerate(ordered)]
     return questions, dict(excluded)
@@ -54,10 +55,7 @@ def prepare_dataset(request, out):
         # Delegate rather than duplicate: metadata filters, boxed-reference
         # validation, full eligible-family scan and slice-v1 ordering stay exact.
         from .data import prepare_numina
-        train = int(request.max_questions * .7)
-        val = max(1, int(request.max_questions * .15))
-        return prepare_numina(out, dict(train=train, val=val,
-                              test=request.max_questions - train - val), request.revision)
+        return prepare_numina(out, request.split_counts(), request.revision)
     from datasets import load_dataset
     from huggingface_hub import HfApi
 
