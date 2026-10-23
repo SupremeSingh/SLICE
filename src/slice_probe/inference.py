@@ -9,6 +9,10 @@ def predict(checkpoint, question, prefix='', device='cpu', model_override=None, 
     if not question.strip():
         raise ValueError('A nonempty question is required')
     record = load_checkpoint(checkpoint)
+    from .model import require_correctness_head
+    gamma = record.get('head', {}).get('discount_gamma', 1.)
+    if calibration is not None:
+        require_correctness_head(record)
     identity = record['model']
     model, tokenizer, _ = load_model(model_override or identity['id'], identity['revision'], device,
                                      hashes=identity['hashes'])
@@ -27,8 +31,13 @@ def predict(checkpoint, question, prefix='', device='cpu', model_override=None, 
         x=concatenate(states,record['layers'],record['rms_eps'])
     from .comparison import predict as predict_readout
     score=float(predict_readout(record,x.numpy(),device)[0])
-    result=dict(score=score,predicted_correct=score>=.5,prefix_tokens=len(ids),
-        scope='Estimated eventual correctness under the collection policy; raw score, not a calibrated probability or proof.')
+    result=dict(score=score, raw_value=score, prefix_tokens=len(ids), discount_gamma=gamma,
+        value_target=record.get('head', {}).get('target', 'eventual verified final-answer correctness'))
+    if gamma == 1.:
+        result.update(predicted_correct=score>=.5,
+            scope='Estimated eventual correctness under the collection policy; raw score, not a calibrated probability or proof.')
+    else:
+        result['scope']='Raw discounted return estimate; no correctness threshold or probability interpretation.'
     if calibration is not None:
         from .calibration import apply_calibrator
         data=read_json(calibration)

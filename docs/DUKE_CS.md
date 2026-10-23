@@ -429,3 +429,24 @@ retain the requested tolerances and contribute to overall acceptance. Failed
 comparisons record reference scale, relative L2 error, failing-element counts,
 and the expected/observed values at the largest absolute difference. Do not
 raise tolerances solely to obtain a passing report.
+
+For near-context coverage, submit this separate bounded diagnostic:
+
+```bash
+sbatch scripts/extraction-parity-long-native.sbatch
+```
+
+It tests one short and two genuine saved trajectories containing at least 3,584
+visible tokens (prompt plus continuation), across all three original compressor
+seeds. Long inputs use their complete saved token sequences within the pinned
+model's context; they are never padded, repeated or clipped to meet the length
+requirement. Insufficient genuine samples cause refusal. The report includes
+sample kinds, token counts and the model context limit. This diagnostic requests
+one A5000 for at most two hours, and does no generation or fitting.
+
+Read `artifacts/extraction-parity-long-JOB_ID/report.json` and inspect all four
+categories. Earlier Duke run 13121350 passed source-implementation agreement,
+fixed-shape causality and offload/reload on short sequences, but failed the
+strict full-sequence versus prefix-only tolerance. That is not an overall parity
+pass or evidence of long-context agreement. Long-context results must be checked
+separately; do not widen the tolerance simply to obtain a passing job status.

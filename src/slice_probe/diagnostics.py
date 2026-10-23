@@ -3,9 +3,24 @@ import numpy as np
 from .metrics import auc
 
 
-def question_carry_forward(scores, question, position):
+def question_carry_forward(scores, question, position, *, initial_scores=None, initial_questions=None):
     """Repeat a question's initial score; never use its outcomes to construct it."""
     scores = np.atleast_2d(scores)
+    question, position = np.asarray(question), np.asarray(position)
+    if (question.ndim != 1 or position.shape != question.shape or scores.shape[1] != len(question)
+            or not np.isfinite(scores).all()):
+        raise ValueError('Finite aligned scores, question IDs and positions required')
+    if (initial_scores is None) != (initial_questions is None):
+        raise ValueError('Canonical initial scores and question IDs must be supplied together')
+    if initial_scores is not None:
+        initial = np.atleast_2d(initial_scores)
+        ids = np.asarray(initial_questions)
+        if (ids.ndim != 1 or initial.shape != (len(scores), len(ids))
+                or len(np.unique(ids)) != len(ids) or not np.isfinite(initial).all()
+                or not np.isin(question, ids).all()):
+            raise ValueError('One finite canonical initial score per head and question required')
+        lookup = {q: i for i, q in enumerate(ids)}
+        return initial[:, [lookup[q] for q in question]]
     result = np.empty_like(scores)
     for q in np.unique(question):
         initial = (question == q) & (position == 0)

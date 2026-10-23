@@ -45,9 +45,14 @@ def smoke(out, request, bundle, device, execution):
     if not ids or len(ids) + request.max_new_tokens > model.config.max_position_embeddings:
         raise ValueError('Smoke prompt plus generation limit exceeds model context')
     full = capture(model, torch.tensor([ids + [ids[-1]]], device=device), [len(ids) - 1], layers)
+    # Keep sequence shape fixed when testing future-token independence. Prefix
+    # length changes have a separate numerical audit and are not leakage tests.
+    vocab = getattr(model.config, 'vocab_size', max(ids) + 2)
+    changed = capture(model, torch.tensor([ids + [(ids[-1] + 1) % vocab]], device=device),
+                      [len(ids) - 1], layers)
     partial = capture(model, torch.tensor([ids], device=device), [len(ids) - 1], layers)
     for layer in layers:
-        torch.testing.assert_close(full[layer], partial[layer], rtol=1e-4, atol=1e-5)
+        torch.testing.assert_close(full[layer], changed[layer], rtol=1e-4, atol=1e-5)
     x = concatenate(partial, layers, model.config.rms_norm_eps).numpy()
     if x.shape != (1, len(layers) * model.config.hidden_size) or not np.isfinite(x).all():
         raise ValueError('Smoke feature shape or finiteness check failed')

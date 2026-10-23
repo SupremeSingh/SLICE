@@ -124,3 +124,31 @@ def test_standard_evaluation_rejects_training_manifest_substitution(tmp_path):
     row['scope']='Changed metadata with all arrays untouched';write_json(manifest,row)
     with pytest.raises(ValueError,match='Training feature manifest'):
         evaluation.evaluate(tmp_path/'demo/features',tmp_path/'demo/probes',tmp_path/'invalid')
+
+
+def test_canonical_initials_do_not_depend_on_continuation_roundoff():
+    p = np.array([.6, .9, .61, .1, .4, .8, .39, .2])
+    q = np.repeat([0, 1], 4)
+    pos = np.tile([0, 1, 0, 1], 2)
+    result = question_carry_forward(p, q, pos, initial_scores=[.6, .4], initial_questions=[0, 1])
+    np.testing.assert_array_equal(result[0], [.6]*4 + [.4]*4)
+    with pytest.raises(ValueError, match='canonical'):
+        question_carry_forward(p, q, pos, initial_scores=[.6], initial_questions=[0])
+
+
+def test_canonical_question_features_reject_inconsistent_duplicates(tmp_path, monkeypatch):
+    from slice_probe.collection import load_question_only
+    _, features = matched_features(tmp_path, monkeypatch)
+    initial = load_question_only(features)
+    assert len(initial['question']) == 1
+    path = features / 'test-anchor-x.npy'
+    x = np.load(path).copy()
+    positions = np.load(features / 'test-anchor-position.npy')
+    indices = np.flatnonzero(positions == 0)
+    x[indices[-1], 0] += 1
+    np.save(path, x)
+    manifest = read_json(features / 'manifest.json')
+    manifest['files'][path.name] = sha256(path)
+    write_json(features / 'manifest.json', manifest)
+    with pytest.raises(ValueError, match='cached features differ'):
+        load_question_only(features)

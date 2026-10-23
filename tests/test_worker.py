@@ -72,6 +72,11 @@ def test_training_to_publication_resumes_without_duplicate_collection(fitted, tm
     if head == 'ridge':
         assert status['evaluation']['head_training_distribution'] == 'all-training-tokens'
     manifest = inspect_artifact(status['artifact_path'])
+    assert set(status['artifact_paths']) == {'7', '8', '9'}
+    assert set(status['evaluation']['raw_by_seed']) == {'7', '8', '9'}
+    assert status['evaluation']['question_only_reference'] == 'canonical prefix-only features'
+    for seed, path in status['artifact_paths'].items():
+        assert inspect_artifact(path)['metadata']['head_seed'] == int(seed)
     assert manifest['head']['method'] == head
     from slice_probe.collection import load_split
     from slice_probe.io import load_checkpoint
@@ -88,6 +93,44 @@ def test_training_to_publication_resumes_without_duplicate_collection(fitted, tm
     assert set(status['evaluation']['baselines']) >= {'constant', 'final/ridge'}
     run_job(root / 'request.json', device='cpu')
     assert collected == ['collected']
+    if head == 'ridge':
+        exercise_legacy_finalization(root, tmp_path, monkeypatch)
+
+
+def exercise_legacy_finalization(root, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from slice_probe import finalization
+    from slice_probe.io import sha256
+    from slice_probe.worker import completed_files
+    legacy = tmp_path / 'legacy-job'
+    shutil.copytree(root, legacy)
+    # Simulate the already-running source version: one final head, three fitted compressors.
+    for seed in (8, 9):
+        shutil.rmtree(legacy / f'selected/seed{seed}')
+    (legacy / 'selected/heads.json').unlink()
+    write_json(legacy / 'selected/.complete.json', dict(files=completed_files(legacy / 'selected')))
+    before = {str(p.relative_to(legacy)):sha256(p) for p in legacy.rglob('*') if p.is_file()}
+    out = tmp_path / 'finalization'
+    finalization.prepare_finalization(legacy, out)
+    monkeypatch.setattr(finalization.subprocess, 'run', lambda *a, **kw: SimpleNamespace(stdout='1234'))
+    with pytest.raises(ValueError, match='still live'):
+        finalization.finalize_job(out / 'plan.json')
+    monkeypatch.setattr(finalization.subprocess, 'run', lambda *a, **kw: SimpleNamespace(stdout=''))
+    original_fit = training.all_token_ridge
+    fitted_seeds = []
+    def tracked(record, *args):
+        fitted_seeds.append(record['seed'])
+        return original_fit(record, *args)
+    monkeypatch.setattr(training, 'all_token_ridge', tracked)
+    result = finalization.finalize_job(out / 'plan.json')
+    assert result['status'] == 'completed'
+    assert fitted_seeds == [8, 9]
+    assert set(result['artifact_paths']) == {'7', '8', '9'}
+    assert result['evaluation']['question_only_reference'] == 'canonical prefix-only features'
+    assert read_json(out / 'selected/reuse.json')['checkpoint_sha256'] == sha256(legacy / 'selected/ridge.pt')
+    assert {str(p.relative_to(legacy)):sha256(p) for p in legacy.rglob('*') if p.is_file()} == before
+    finalization.finalize_job(out / 'plan.json')
+    assert fitted_seeds == [8, 9]
 
 
 def test_expired_budget_stops_before_starting_another_stage(tmp_path):

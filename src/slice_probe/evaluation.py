@@ -3,10 +3,10 @@ from pathlib import Path
 import csv
 import numpy as np
 
-from .collection import load_split
+from .collection import load_split, load_question_only
 from .io import read_json, load_checkpoint, require_empty, write_json, sha256
 from .metrics import metrics
-from .model import predict_features
+from .model import predict_features, require_correctness_head
 from .diagnostics import question_carry_forward, within_question_ranking
 
 
@@ -41,18 +41,22 @@ def evaluate(features, probes, out, device='cpu'):
     if selection.get('feature_manifest_sha256') != manifest_hash:
         raise ValueError('Training feature manifest differs from evaluation features')
     selections = selection['selected']
-    predictions, checkpoints = {}, {}
+    predictions, checkpoints, initial_predictions = {}, {}, {}
+    canonical = load_question_only(features)
     for name, item in selections.items():
         path = Path(probes) / item['path']
         if sha256(path) != item['sha256']:
             raise ValueError('Selected checkpoint changed')
         record = load_checkpoint(path)
+        require_correctness_head(record)
         if record.get('feature_manifest_sha256') != manifest_hash:
             raise ValueError('Checkpoint training feature manifest differs')
         if (record['layers'] != manifest['layers'] or record['rms_eps'] != manifest['rms_eps']
                 or record['model']['hashes'] != manifest['model']['hashes']):
             raise ValueError('Probe and feature encoder differ')
         predictions[name] = predict_features(record, test['x'], device)
+        if canonical is not None:
+            initial_predictions[name] = predict_features(record, canonical['x'], device)
         checkpoints[name] = dict(kind=record['kind'], seed=record['seed'], ridge_states=record['ridge_states'])
     if not predictions:
         raise ValueError('No selected probes')
@@ -70,8 +74,14 @@ def evaluate(features, probes, out, device='cpu'):
                    for name,p in groups.items() if name != 'constant'}
     if 'plain' in groups and 'sparse' in groups:
         comparisons['sparse_minus_plain'] = paired_interval(test['y'], groups['sparse'], groups['plain'], test['question'])
-    carry = {name: question_carry_forward(p, test['question'], test['position'])
-             for name,p in groups.items()}
+    initial_groups = {}
+    if canonical is not None:
+        initial_groups['constant'] = np.full((1, len(canonical['question'])), float(train['y'].mean()))
+        for kind in sorted({v['kind'] for v in checkpoints.values()}):
+            initial_groups[kind] = np.stack([initial_predictions[k] for k,v in checkpoints.items() if v['kind'] == kind])
+    carry = {name: question_carry_forward(p, test['question'], test['position'],
+        **(dict(initial_scores=initial_groups[name], initial_questions=canonical['question'])
+           if canonical is not None else {})) for name,p in groups.items()}
     advancing = test['position'] > 0
     difficulty = dict(carry_forward={name:metric_average(test['y'],p) for name,p in carry.items()},
         updated_minus_initial={name:paired_interval(test['y'][advancing],p[:,advancing],

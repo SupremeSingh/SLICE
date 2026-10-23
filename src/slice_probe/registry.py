@@ -81,11 +81,15 @@ def inspect_artifact(path: Path | str) -> dict:
 def publish(checkpoint, registry, version, *, calibration=None, evaluation=None,
             feature_manifest=None, metadata=None, statistics=None, trajectory_manifest=None) -> Path:
     """Publish only complete directories. Existing versions are never overwritten."""
-    from .model import restore
+    from .model import restore, require_correctness_head
 
     version_name(version)
     checkpoint = Path(checkpoint)
     record = load_checkpoint(checkpoint)
+    if calibration is not None:
+        require_correctness_head(record)
+    if record.get('validation') is not None:
+        require_correctness_head(record)
     restore(record)  # Validate dimensions, weights and normalization before publication.
     if any(not torch.isfinite(value).all() for value in record['state'].values()):
         raise ValueError('Cannot publish nonfinite compressor weights')
@@ -135,6 +139,7 @@ def publish(checkpoint, registry, version, *, calibration=None, evaluation=None,
             feature_implementation=FEATURE_IMPLEMENTATION,
             training_population=record.get('training_population'),
             validation=record.get('validation'), validation_binding=record.get('validation_binding'),
+            validation_status=record.get('validation_status'),
             feature_id=feature_identity(record), checkpoint_sha256=sha256(checkpoint),
             encoder=record['model'], tokenizer_id=canonical_hash(record['model']),
             features=dict(layers=record['layers'], layer_selection=record.get('layer_selection'),

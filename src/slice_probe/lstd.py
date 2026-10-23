@@ -179,7 +179,8 @@ def fit_lstd(checkpoint, trajectories, feature_manifest, out, *, trace_lambda=.9
                   head=dict(method='lstd', trace_lambda=trace_lambda, discount_gamma=discount_gamma,
                             regularization=regularization, intercept=True,
                             reward=manifest['reward'], terminal=manifest['terminal'],
-                            statistics='raw sums', target='discounted verified final-answer outcome'),
+                            statistics='raw sums', target=('eventual verified final-answer correctness' if discount_gamma == 1.
+                                                          else 'discounted terminal correctness reward')),
                   training_population=manifest.get('training_population', dict(
                       policy='verified, explicitly completed training answers only',
                       included_episodes=statistics.episodes, excluded=manifest['excluded'])),
@@ -189,9 +190,22 @@ def fit_lstd(checkpoint, trajectories, feature_manifest, out, *, trace_lambda=.9
     if 'validation' in result:
         result['source_ridge_validation'] = result['validation'].copy()
     from .training import update_validation
-    update_validation(result, Path(feature_manifest).parent)
+    if discount_gamma == 1.:
+        update_validation(result, Path(feature_manifest).parent)
+    else:
+        # Saved validation labels are binary outcomes, not gamma**remaining_steps
+        # returns. Retain selection history without calling it this head's validation.
+        if 'selection_validation_sampled_head' not in result and 'validation' in result:
+            result['selection_validation_sampled_head'] = result['validation'].copy()
+            result['selection_validation_sampled_head_binding'] = result.get('validation_binding')
+        result.pop('validation', None)
+        result.pop('validation_binding', None)
+        result['validation_status'] = dict(status='not_evaluated', target=result['head']['target'],
+            reason='Saved validation labels are binary correctness, not discounted returns. '
+                   'Evaluate using held-out transitions and their discounted returns.')
     save_checkpoint(out / 'lstd.pt', result)
     np.savez(out / 'statistics.npz', a=statistics.a, b=statistics.b)
     write_json(out / 'fit.json', dict(head=result['head'], checks=checks,
+                                     validation_status=result.get('validation_status'),
                                      feature_id=manifest['feature_id'], trajectories=sorted(seen)))
     return out / 'lstd.pt'

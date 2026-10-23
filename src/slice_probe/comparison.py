@@ -9,9 +9,9 @@ import numpy as np
 import torch
 from torch import nn
 
-from .collection import load_split
+from .collection import load_split, load_question_only
 from .training import normalization, fit
-from .model import predict_features
+from .model import predict_features, require_correctness_head
 from .evaluation import metric_average, paired_interval
 from .diagnostics import question_carry_forward, within_question_ranking
 from .calibration import fit_platt, apply_calibrator, select_acceptance, calibrated_report
@@ -225,6 +225,7 @@ def evaluate_comparison(features,run,out,device='cpu',lock_sha256=None,figures=F
     calibration=read_json(run/'calibration.json');records={}
     for name,item in selection.items():
         record=load_checkpoint(run/item['path']);records[name]=record
+        require_correctness_head(record)
         if record['feature_manifest_sha256']!=lock['feature_manifest_sha256']:
             raise ValueError('Selected probe was fitted on different features')
         raw[name]=predict(record,datasets[item['representation']]['x'],device)
@@ -235,7 +236,20 @@ def evaluate_comparison(features,run,out,device='cpu',lock_sha256=None,figures=F
     groups={name:np.stack(values) for name,values in groups.items()}
     groups['constant']=np.full((1,len(test['y'])),float(train['y'].mean()))
     results={name:metric_average(test['y'],p) for name,p in groups.items()}
-    carry={name:question_carry_forward(p,test['question'],test['position']) for name,p in groups.items()}
+    canonical = {rep:load_question_only(features, representation=rep) for rep in datasets}
+    initial_groups = {}
+    if all(value is not None for value in canonical.values()):
+        initial_questions = canonical['concat']['question']
+        if any(not np.array_equal(value['question'], initial_questions) for value in canonical.values()):
+            raise ValueError('Canonical baseline question IDs differ')
+        for name, item in selection.items():
+            initial_groups.setdefault(item['group'], []).append(
+                predict(records[name], canonical[item['representation']]['x'], device))
+        initial_groups = {name:np.stack(values) for name, values in initial_groups.items()}
+        initial_groups['constant'] = np.full((1, len(initial_questions)), float(train['y'].mean()))
+    carry={name:question_carry_forward(p,test['question'],test['position'],
+        **(dict(initial_scores=initial_groups[name], initial_questions=initial_questions)
+           if initial_groups else {})) for name,p in groups.items()}
     advancing=test['position']>0
     difficulty={name:dict(initial_carried_forward=metric_average(test['y'],carry[name]),
         updated_minus_initial=paired_interval(test['y'][advancing],p[:,advancing],
@@ -249,7 +263,9 @@ def evaluate_comparison(features,run,out,device='cpu',lock_sha256=None,figures=F
             p=predict(records[name],anchor_data[item['representation']]['x'],device)
             anchor_predictions[name]=p;anchor_groups.setdefault(item['group'],[]).append(p)
         for group,values in anchor_groups.items():
-            values=np.stack(values);initial=question_carry_forward(values,anchor['question'],anchor['position'])
+            values=np.stack(values);initial=question_carry_forward(values,anchor['question'],anchor['position'],
+                **(dict(initial_scores=initial_groups[group], initial_questions=initial_questions)
+                   if initial_groups else {}))
             within[group]=within_question_ranking(anchor['y'],values,anchor['question'],anchor['response'],anchor['position'])
             anchors[group]={}
             for step in np.unique(anchor['position']):
@@ -265,6 +281,7 @@ def evaluate_comparison(features,run,out,device='cpu',lock_sha256=None,figures=F
     out=require_empty(out)
     write_json(out/'evaluation-environment.json',environment())
     write_json(out/'summary.json',dict(results=results,comparisons=comparisons,question_difficulty=difficulty,
+        question_only_reference='canonical prefix-only features' if initial_groups else 'legacy sampled L=0 scores',
         fixed_token_checkpoints=anchors,within_question=within,calibrated_by_head=by_head,
         lock_sha256=digest,mode=lock['config']['mode'],test_scope=lock['config']['test_scope'],
         test_questions=len(sets[2]),test_prefixes=len(test['y']),
@@ -277,6 +294,8 @@ def evaluate_comparison(features,run,out,device='cpu',lock_sha256=None,figures=F
         response=test['response'],position=test['position'],
         **{f'calibrated-{name}':p for name,p in calibrated.items()},
         **{f'initial-{name}':p for name,p in carry.items()})
+    if initial_groups:
+        np.savez_compressed(out/'question-only-predictions.npz', question=initial_questions, **initial_groups)
     if anchor_predictions:
         np.savez_compressed(out/'checkpoint-predictions.npz',**anchor_predictions,
             **{k:anchor[k] for k in ('y','question','response','position')})
@@ -399,7 +418,9 @@ def verify_bundle(bundle,out):
     groups={}
     with np.load(bundle/'evaluation/predictions.npz',allow_pickle=False) as saved:
         y=saved['y']
-        for name,item in selection.items():groups.setdefault(item['group'],[]).append(saved[name])
+        for name,item in selection.items():
+            require_correctness_head(load_checkpoint(bundle/'fitted'/item['path']))
+            groups.setdefault(item['group'],[]).append(saved[name])
         groups['constant']=saved['initial-constant']
         results={name:metric_average(y,p) for name,p in groups.items()}
         question, position = saved['question'], saved['position']
@@ -407,7 +428,13 @@ def verify_bundle(bundle,out):
         allowed = {i for i, row in enumerate(questions) if row['split'] == 'test'}
         if not set(question).issubset(allowed):
             raise ValueError('Released predictions contain non-test question IDs')
-        carry = {name: question_carry_forward(p, question, position) for name, p in groups.items()}
+        canonical = {}
+        if reported.get('question_only_reference') == 'canonical prefix-only features':
+            with np.load(bundle/'evaluation/question-only-predictions.npz', allow_pickle=False) as initial:
+                canonical = {name:dict(initial_scores=initial[name], initial_questions=initial['question'])
+                             for name in groups}
+        carry = {name: question_carry_forward(p, question, position, **canonical.get(name, {}))
+                 for name, p in groups.items()}
         for name, initial in carry.items():
             if not np.allclose(initial, saved[f'initial-{name}'], rtol=1e-10, atol=1e-12):
                 raise ValueError(f'Released carry-forward scores differ: {name}')

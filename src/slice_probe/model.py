@@ -51,3 +51,10 @@ def predict_features(record,x,device='cpu',batch_size=1024):
         outputs.append((z@weights[:-1]+weights[-1]).cpu())
     if not outputs:raise ValueError('No features')
     return torch.cat(outputs).numpy()
+
+
+def require_correctness_head(record):
+    """Binary correctness reports/calibration are meaningful only at gamma=1."""
+    if record.get('head', {}).get('discount_gamma', 1.) != 1.:
+        raise ValueError('Correctness reporting and probability calibration require gamma=1; '
+                         'this head predicts discounted returns')

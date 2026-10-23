@@ -51,9 +51,9 @@ def stage(root, name, action):
     return destination
 
 
-def fit_optional_head(out, fitted, features, answers, request, device):
+def _fit_head(out, fitted, features, answers, request, device):
     from .calibration import apply_calibrator, fit_platt, select_acceptance
-    from .collection import load_split
+    from .collection import load_split, load_question_only
     from .lstd import extract_trajectories, fit_lstd
     from .model import predict_features
 
@@ -91,9 +91,66 @@ def fit_optional_head(out, fitted, features, answers, request, device):
         calibration_sha256=sha256(out / 'calibration.json'), target='verified final-answer correctness'))
 
 
-def evaluate_selected(out, selected, features, comparison_report, device):
+def _reuse_head(source, out, features, request):
+    """Copy one completed head without fitting or carrying over a stale calibrator."""
+    selection = read_json(source / 'selection.json')
+    checkpoint = source / selection['checkpoint']
+    if (sha256(checkpoint) != selection['checkpoint_sha256']
+            or selection['feature_manifest_sha256'] != sha256(features / 'manifest.json')
+            or sha256(source / 'calibration.json') != selection['calibration_sha256']):
+        raise ValueError('Reusable head identity changed')
+    record = load_checkpoint(checkpoint)
+    if (record['seed'] != request.seed or record.get('head', {}).get('method', 'ridge') != request.head
+            or record.get('ridge_states') != (request.ridge_states if request.head == 'ridge'
+                                             else 'complete-training-trajectories')):
+        raise ValueError('Reusable head does not match this request')
+    checks = record['fit_checks']
+    if checks.get('epsilon', checks.get('regularization')) != request.regularization:
+        raise ValueError('Reusable head regularization differs')
+    if request.head == 'lstd':
+        if (record['head']['trace_lambda'] != request.trace_lambda
+                or record['head']['discount_gamma'] != request.discount_gamma):
+            raise ValueError('Reusable LSTD policy differs')
+        # Its trajectory/statistics files belong to the original immutable stage;
+        # fit again rather than detach those files from their checked provenance.
+        return False
+    out.mkdir()
+    copied = out / 'ridge.pt'
+    shutil.copy2(checkpoint, copied)
+    shutil.copy2(checkpoint.with_suffix('.sha256.json'), copied.with_suffix('.sha256.json'))
+    shutil.copy2(source / 'calibration.json', out / 'calibration.json')
+    write_json(out / 'selection.json', dict(selection, checkpoint=copied.name))
+    write_json(out / 'reuse.json', dict(source=str(source.resolve()), checkpoint_sha256=sha256(copied)))
+    return True
+
+
+def fit_optional_head(out, fitted, features, answers, request, device, *, reusable=None):
+    """Fit every requested seed, retaining the designated primary-head interface."""
+    from dataclasses import replace
+    reusable_heads = {}
+    if reusable is not None:
+        reusable = Path(reusable)
+        reusable_heads = (read_json(reusable / 'heads.json')['heads'] if (reusable / 'heads.json').exists()
+                          else {str(request.seed): dict(directory='.')})
+    heads = {}
+    for seed in request.training_seeds:
+        directory = out if seed == request.seed else out / f'seed{seed}'
+        single = replace(request, seed=seed, training_seeds=(seed,))
+        reused = False
+        if str(seed) in reusable_heads:
+            reused = _reuse_head(reusable / reusable_heads[str(seed)]['directory'], directory, features, single)
+        if not reused:
+            _fit_head(directory, fitted, features, answers, single, device)
+        selection = read_json(directory / 'selection.json')
+        heads[str(seed)] = dict(directory=os.path.relpath(directory, out),
+            checkpoint_sha256=selection['checkpoint_sha256'])
+    write_json(out / 'heads.json', dict(primary_seed=request.seed, heads=heads,
+        scope='One independently fitted final head per requested compressor seed. No test-based head selection.'))
+
+
+def _evaluate_head(out, selected, features, comparison_report, device):
     from .calibration import calibrated_report
-    from .collection import load_split
+    from .collection import load_split, load_question_only
     from .diagnostics import question_carry_forward, within_question_ranking
     from .evaluation import paired_interval
     from .metrics import metrics
@@ -106,12 +163,17 @@ def evaluate_selected(out, selected, features, comparison_report, device):
             or sha256(selected / 'calibration.json') != selection['calibration_sha256']):
         raise ValueError('Selected head changed before evaluation')
     record = load_checkpoint(checkpoint)
+    from .model import require_correctness_head
+    require_correctness_head(record)
     test, _ = load_split(features, 'test')
     raw = predict_features(record, test['x'], device)
     data = read_json(selected / 'calibration.json')
     probability, calibrated = calibrated_report(test['y'], raw, data['calibrators']['selected'],
                                                 data['operating_points']['selected'])
-    initial = question_carry_forward(raw, test['question'], test['position'])
+    canonical = load_question_only(features)
+    initial = question_carry_forward(raw, test['question'], test['position'],
+        **(dict(initial_scores=predict_features(record, canonical['x'], device),
+                initial_questions=canonical['question']) if canonical is not None else {}))
     advancing = test['position'] > 0
     out.mkdir()
     np.savez_compressed(out / 'predictions.npz', raw_value=raw, probability=probability,
@@ -126,7 +188,8 @@ def evaluate_selected(out, selected, features, comparison_report, device):
                         response=anchors['response'], position=anchors['position'])
     write_json(out / 'summary.json', dict(
         raw=metrics(test['y'], raw), calibrated=calibrated,
-        question_only=metrics(test['y'][~advancing], raw[~advancing]),
+        question_only=metrics(test['y'][~advancing], initial[0, ~advancing]),
+        question_only_reference='canonical prefix-only features' if canonical is not None else 'legacy sampled L=0 scores',
         updated_minus_initial=paired_interval(test['y'][advancing], raw[advancing],
             initial[:, advancing], test['question'][advancing]) if advancing.any() else None,
         baselines=comparison_report['results'], checkpoint_sha256=sha256(checkpoint),
@@ -135,8 +198,62 @@ def evaluate_selected(out, selected, features, comparison_report, device):
         head_training_distribution=record.get('ridge_states'),
         training_population=record.get('training_population'),
         baseline_training_distribution='matched sampled prefixes',
+        method_only_comparison=False,
         scope='New pilot, conditional on verifiable answers. Selected all-token Ridge or LSTD fitting '
               'differs from matched sampled-prefix baselines. Raw values and calibrated probabilities are distinct.'))
+
+
+def evaluate_selected(out, selected, features, comparison_report, device):
+    from .evaluation import metric_average
+    heads = (read_json(selected / 'heads.json') if (selected / 'heads.json').exists() else
+             dict(primary_seed=None, heads={'primary': dict(directory='.')}))
+    predictions, summaries, seeds = [], {}, []
+    for seed, item in sorted(heads['heads'].items(), key=lambda item: (item[1]['directory'] != '.', item[0])):
+        directory = item['directory']
+        destination = out if directory == '.' else out / directory
+        _evaluate_head(destination, selected / directory, features, comparison_report, device)
+        summaries[seed] = read_json(destination / 'summary.json')
+        with np.load(destination / 'predictions.npz', allow_pickle=False) as data:
+            predictions.append(data['raw_value'].copy())
+            if not seeds:
+                targets = data['y'].copy()
+                identities = {name:data[name].copy() for name in ('question', 'response', 'position')}
+            elif not np.array_equal(targets, data['y']) or any(
+                    not np.array_equal(value, data[name]) for name,value in identities.items()):
+                raise ValueError('Final heads evaluated on different prefix populations')
+        seeds.append(seed)
+    summary = read_json(out / 'summary.json')
+    summary.update(primary_seed=heads['primary_seed'], evaluated_seeds=seeds,
+        raw_by_seed={seed:row['raw'] for seed,row in summaries.items()},
+        multi_seed_raw=metric_average(targets, np.stack(predictions)),
+        seed_aggregation='Mean metrics across independently fitted heads; not an ensemble.')
+    write_json(out / 'summary.json', summary)
+
+
+def publish_heads(selected, evaluation, features, registry, version, metadata):
+    heads = read_json(selected / 'heads.json')
+    paths = {}
+    for seed, item in sorted(heads['heads'].items(), key=lambda item: (item[1]['directory'] != '.', item[0])):
+        directory = item['directory']
+        root = selected / directory
+        choice = read_json(root / 'selection.json')
+        name = version if directory == '.' else f'{version}-seed{seed}'
+        destination = Path(registry) / name
+        if destination.exists():
+            manifest = inspect_artifact(destination)
+            if (manifest['checkpoint_sha256'] != choice['checkpoint_sha256']
+                    or manifest['metadata'].get('request_hash') != metadata['request_hash']):
+                raise ValueError('Published version belongs to a different request or head')
+        else:
+            lstd = load_checkpoint(root / choice['checkpoint']).get('head', {}).get('method') == 'lstd'
+            publish(root / choice['checkpoint'], registry, name,
+                calibration=root / 'calibration.json', evaluation=evaluation / directory,
+                feature_manifest=features / 'manifest.json',
+                statistics=root / 'fit/statistics.npz' if lstd else None,
+                trajectory_manifest=root / 'trajectories/manifest.json' if lstd else None,
+                metadata=dict(metadata, head_seed=int(seed)))
+        paths[seed] = str(destination)
+    return paths
 
 
 def run_job(path, *, device='auto'):
@@ -225,25 +342,13 @@ def run_job(path, *, device='auto'):
                 out, selected, features, read_json(comparison / 'summary.json'), device))
             current = 'publishing'
             status('running', current)
-            choice = read_json(selected / 'selection.json')
-            version = 'job-' + bundle['job_id']
-            destination = Path(bundle['registry']) / version
-            if destination.exists():
-                manifest = inspect_artifact(destination)
-                if (manifest['checkpoint_sha256'] != choice['checkpoint_sha256']
-                        or manifest['metadata'].get('request_hash') != bundle['request_hash']):
-                    raise ValueError('Published version belongs to a different request or head')
-            else:
-                publish(selected / choice['checkpoint'], bundle['registry'], version,
-                        calibration=selected / 'calibration.json', evaluation=evaluation,
-                        feature_manifest=features / 'manifest.json',
-                        statistics=selected / 'fit/statistics.npz' if request.head == 'lstd' else None,
-                        trajectory_manifest=selected / 'trajectories/manifest.json' if request.head == 'lstd' else None,
-                        metadata=dict(request_hash=bundle['request_hash'], request=request.to_dict(),
-                                      project=bundle.get('project'), smoke=smoke_report))
+            paths = publish_heads(selected, evaluation, features, bundle['registry'], 'job-' + bundle['job_id'],
+                dict(request_hash=bundle['request_hash'], request=request.to_dict(),
+                     project=bundle.get('project'), smoke=smoke_report))
+            destination = paths[str(request.seed)]
             manifest = inspect_artifact(destination)
-            status('completed', 'published', critic_version=version,
-                   artifact_path=str(destination), feature_id=manifest['feature_id'],
+            status('completed', 'published', critic_version=manifest['version'],
+                   artifact_path=str(destination), artifact_paths=paths, feature_id=manifest['feature_id'],
                    evaluation=read_json(evaluation / 'summary.json'))
         except BaseException as exc:
             status('cancelled' if isinstance(exc, (Cancelled, KeyboardInterrupt)) else 'failed',

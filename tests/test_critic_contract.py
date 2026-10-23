@@ -169,3 +169,19 @@ def test_failed_reload_leaves_coherent_cpu_extractor(fitted, monkeypatch):
     assert critic.device == 'cpu' and critic.feature_id == original_id
     assert critic._mean.device.type == critic._scale.device.type == 'cpu'
     assert critic.encode_trajectory([1, 2, 3], [2], tokenizer_id=critic.tokenizer_id).shape == (1, 2)
+
+
+def test_long_audit_uses_real_unpadded_near_context_sequences(tmp_path):
+    from slice_probe.extraction_parity import select_sequences
+    from slice_probe.io import write_json
+    questions = [dict(index=i, id=str(i), prompt_token_ids=[1, 2]) for i in range(3)]
+    for i, length in enumerate((2, 6, 5)):
+        write_json(tmp_path / 'trajectories' / f'{i:05d}.json', dict(responses=[dict(token_ids=[3]*length)]))
+    sequences = select_sequences(tmp_path, questions, 1, long_samples=2, long_min_tokens=7, context_limit=8)
+    assert [row['sample_kind'] for row in sequences] == ['short', 'long', 'long']
+    assert [row['token_count'] for row in sequences] == [4, 8, 7]
+    assert all(row['token_count'] == row['saved_token_count'] for row in sequences if row['sample_kind']=='long')
+    with pytest.raises(ValueError, match='Insufficient genuine'):
+        select_sequences(tmp_path, questions, 1, long_samples=3, long_min_tokens=7, context_limit=8)
+    with pytest.raises(ValueError, match='fit the model context'):
+        select_sequences(tmp_path, questions, 1, long_samples=1, long_min_tokens=9, context_limit=8)

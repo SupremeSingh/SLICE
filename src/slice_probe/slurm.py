@@ -242,6 +242,10 @@ class Slurm:
                   ([line.split('|')[:2] for line in live if line.strip()] or entries)}
         if states & {'PENDING', 'RUNNING', 'CONFIGURING', 'COMPLETING', 'REQUEUED', 'SUSPENDED'}:
             status = 'running' if 'RUNNING' in states else 'queued'
+        elif live:
+            # Presence in squeue is authoritative: unknown/transitional live
+            # states must retain the active slot, even if accounting is stale.
+            status = 'completion_unknown'
         elif 'COMPLETED' in states:
             completed = [line.split('|') for line in accounting
                          if line.split('|')[0] == scheduler_id]
@@ -250,8 +254,11 @@ class Slurm:
                 'completed' if all(code == '0:0' for code in codes) else 'failed')
         elif any(s.startswith('CANCELLED') for s in states):
             status = 'cancelled'
-        else:
+        elif states <= {'FAILED', 'TIMEOUT', 'OUT_OF_MEMORY', 'NODE_FAIL',
+                        'BOOT_FAIL', 'DEADLINE', 'PREEMPTED', 'REVOKED'}:
             status = 'failed'
+        else:
+            status = 'completion_unknown'
         detail = dict(job['detail'], scheduler_states=sorted(states), reserved=True)
         detail['accounting'] = [line for line in accounting if line.split('|')[0] == scheduler_id]
         try:

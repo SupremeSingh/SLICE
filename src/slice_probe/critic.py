@@ -11,7 +11,7 @@ import torch
 from .calibration import apply_calibrator
 from .features import capture, concatenate, load_model, prompt, resolve_device
 from .io import load_checkpoint, read_json, sha256
-from .model import restore
+from .model import restore, require_correctness_head
 from .registry import canonical_hash, feature_identity, inspect_artifact, version_name
 
 
@@ -41,6 +41,8 @@ class Critic:
 
     def __init__(self, checkpoint, device, model_override, calibration, manifest):
         self.record = load_checkpoint(checkpoint)
+        if calibration is not None:
+            require_correctness_head(self.record)
         self.device = resolve_device(device)
         self.compressor = restore(self.record, self.device)
         identity = self.record['model']
@@ -169,6 +171,8 @@ class Critic:
             return features[inverse]
 
     def score_batch(self, states, *, return_calibrated_probability=False):
+        if return_calibrated_probability:
+            require_correctness_head(self.record)
         if return_calibrated_probability and self.calibrator is None:
             raise ValueError('No matching validation-fitted calibrator is available')
         results = []
@@ -185,6 +189,8 @@ class Critic:
                     if not np.isfinite(score):
                         raise ValueError('Nonfinite score')
                     result.update(raw_value=score,
+                                  discount_gamma=self.record.get('head', {}).get('discount_gamma', 1.),
+                                  value_target=self.record.get('head', {}).get('target', 'eventual verified final-answer correctness'),
                                   token_count=len(ids),
                                   encoding_seconds=encoded - start,
                                   head_seconds=perf_counter() - encoded,

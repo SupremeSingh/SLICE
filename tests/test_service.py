@@ -431,3 +431,22 @@ def test_completion_requires_scheduler_exit_code_and_worker_record(config, monke
 
     monkeypatch.setattr(scheduler, 'command', command)
     assert scheduler.refresh(store, job['id'])['status'] == expected
+
+
+@pytest.mark.parametrize('live_state', ['RESIZING', 'STOPPED', 'REQUEUE_HOLD', 'FUTURE_STATE', 'COMPLETED'])
+def test_live_states_never_release_the_active_slot(config, monkeypatch, live_state):
+    _, cfg = config
+    store, scheduler = JobStore(cfg['database']), Slurm(cfg)
+    job = store.create('project', 'live-state', dict(dataset='owner/data'))
+    store.update(job['id'], 'running', scheduler_id='1234', detail={'reserved': True})
+    def command(args, **kwargs):
+        if args[0] == 'squeue':
+            return f'1234|{live_state}\n'
+        if args[0] == 'sacct':
+            return f'1234|FAILED|slice-{job["id"]}|1:0|00:01:00\n'
+        return json.dumps(dict(job_id=job['id'], request_hash=job['request_hash'], status='running'))
+    monkeypatch.setattr(scheduler, 'command', command)
+    assert scheduler.refresh(store, job['id'])['status'] == 'completion_unknown'
+    another = store.create('project', 'second', dict(dataset='owner/data'))
+    with pytest.raises(ValueError, match='active'):
+        store.reserve(another['id'], max_total_minutes=500)

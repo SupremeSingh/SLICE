@@ -104,8 +104,42 @@ def audit_sequence(critic, token_ids, prompt_length, original_blocks, original_r
                 matches=all(item['matches'] for item in checks.values()))
 
 
+def select_sequences(source, questions, samples, long_samples=0, long_min_tokens=3584, context_limit=None):
+    """Select genuine saved trajectories by length only; never pad long inputs."""
+    if (type(samples) is not int or samples < 1 or type(long_samples) is not int or long_samples < 0
+            or type(long_min_tokens) is not int or long_min_tokens < 3):
+        raise ValueError('Positive short samples, nonnegative long samples and a valid long-token minimum required')
+    if long_samples and (type(context_limit) is not int or context_limit < long_min_tokens):
+        raise ValueError('Long-token minimum must fit the model context')
+    short, long = [], []
+    for question in questions:
+        path = source / 'trajectories' / f'{question["index"]:05d}.json'
+        batch = read_json(path)
+        short_found = long_found = False
+        for response_index, row in enumerate(batch['responses']):
+            tail = row.get('token_ids', [])
+            prompt = question['prompt_token_ids']
+            if len(tail) < 2:
+                continue
+            def entry(ids, kind):
+                return dict(question_id=question['id'], response=response_index,
+                    token_ids=ids, prompt_length=len(prompt), source_sha256=sha256(path),
+                    sample_kind=kind, token_count=len(ids), saved_token_count=len(prompt)+len(tail))
+            if len(short) < samples and not short_found:
+                short.append(entry(prompt + tail[:128], 'short'))
+                short_found = True
+            if (len(long) < long_samples and not long_found
+                    and long_min_tokens <= len(prompt) + len(tail) <= context_limit):
+                long.append(entry(prompt + tail, 'long'))
+                long_found = True
+        if len(short) == samples and len(long) == long_samples:
+            return short + long
+    raise ValueError(f'Insufficient genuine saved trajectories: short {len(short)}/{samples}, '
+                     f'long {len(long)}/{long_samples}; long inputs are never padded or repeated')
+
+
 def run_extraction_parity(study, model, original_root, out, *, device='cuda', samples=3,
-                          rtol=1e-4, atol=1e-5):
+                          rtol=1e-4, atol=1e-5, long_samples=0, long_min_tokens=3584):
     if type(samples) is not int or samples < 1 or any(not math.isfinite(v) or v < 0 for v in (rtol, atol)):
         raise ValueError('Positive samples and finite nonnegative tolerances required')
     study, model, root = (Path(p).resolve() for p in (study, model, original_root))
@@ -122,22 +156,8 @@ def run_extraction_parity(study, model, original_root, out, *, device='cuda', sa
     modules = ['src/math_rl/critic_layers.py', 'src/math_rl/direct_jlens.py', 'src/math_rl/sparse_bottleneck.py']
     blocks, rms, bottleneck = [original_module(root, name) for name in modules]
     questions = read_json(source / 'questions.json')
-    sequences = []
-    # Selection uses availability/length only, never rewards or prediction scores.
-    for question in questions:
-        path = source / 'trajectories' / f'{question["index"]:05d}.json'
-        batch = read_json(path)
-        for response_index, row in enumerate(batch['responses']):
-            if len(row.get('token_ids', [])) >= 2:
-                ids = question['prompt_token_ids'] + row['token_ids'][:128]
-                sequences.append(dict(question_id=question['id'], response=response_index,
-                    token_ids=ids, prompt_length=len(question['prompt_token_ids']),
-                    source_sha256=sha256(path)))
-                break
-        if len(sequences) == samples:
-            break
-    if len(sequences) != samples:
-        raise ValueError('Insufficient saved trajectories for requested parity sample')
+    context_limit = read_json(model / 'config.json').get('max_position_embeddings')
+    sequences = select_sequences(source, questions, samples, long_samples, long_min_tokens, context_limit)
     out = require_empty(out)
     screen = read_json(study / 'screen.json')
     results = {}
@@ -182,6 +202,9 @@ def run_extraction_parity(study, model, original_root, out, *, device='cuda', sa
         del original, critic
     report = dict(matches=all(row['audit']['matches'] for result in results.values() for row in result['sequences']),
         model=record['model'], precision='float32 eager, TF32 disabled', rtol=rtol, atol=atol,
+        coverage=dict(short_samples=samples, long_samples=long_samples,
+                      long_min_tokens=long_min_tokens if long_samples else None,
+                      context_limit=context_limit, token_counts=[row['token_count'] for row in sequences]),
         layers=record['layers'], original_code_sha256={name:sha256(root/name) for name in modules},
         protocol_sha256=sha256(study/'protocol.json'), results=results,
         scope='Fresh extraction through original hooks/RMS/compressor and public SLICE API on identical saved tokens. '

@@ -112,6 +112,8 @@ def all_token_ridge(record, manifest, answers, device, epsilon):
 
 def update_validation(record, features, device='cpu'):
     """Bind validation to the exact feature transformation and final linear head."""
+    from .model import require_correctness_head
+    require_correctness_head(record)
     import hashlib
     from .registry import feature_identity, canonical_hash
     val, _ = load_split(features, 'val')

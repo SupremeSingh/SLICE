@@ -216,3 +216,25 @@ def load_split(directory,split,verify=True,representation='concat',anchors=False
     if not np.isin(data['y'],[0,1]).all(): raise ValueError('Nonbinary cache labels')
     if (data['position']<0).any(): raise ValueError('Negative prefix positions')
     return data,m
+
+
+def load_question_only(directory, split='test', representation='concat'):
+    """Unique prompt-only features, captured without any continuation tokens.
+
+    Historical caches without zero-token anchors keep their strict legacy checks.
+    Equal questions must have bitwise-identical cached prompt features; never
+    average inconsistent representations or infer them from future outcomes.
+    """
+    manifest = read_json(Path(directory) / 'manifest.json')
+    if not manifest.get('anchor_counts', {}).get(split) or 0 not in manifest.get('checkpoint_positions', []):
+        return None
+    data, _ = load_split(directory, split, representation=representation, anchors=True)
+    rows = np.flatnonzero(data['position'] == 0)
+    questions, first, inverse = np.unique(data['question'][rows], return_index=True, return_inverse=True)
+    if not len(questions):
+        raise ValueError('Missing canonical question-only features')
+    x = np.array(data['x'][rows[first]], copy=True)
+    for start in range(0, len(rows), 1024):
+        if not np.array_equal(data['x'][rows[start:start+1024]], x[inverse[start:start+1024]]):
+            raise ValueError('Question-only cached features differ for identical questions')
+    return dict(x=x, question=questions)

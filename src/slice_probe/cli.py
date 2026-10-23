@@ -158,11 +158,19 @@ def parser():
         extraction.add_argument('--' + name, type=Path, required=True)
     extraction.add_argument('--device', default='cuda')
     extraction.add_argument('--samples', type=int, default=3)
+    extraction.add_argument('--long-samples', type=int, default=0)
+    extraction.add_argument('--long-min-tokens', type=int, default=3584)
     extraction.add_argument('--rtol', type=float, default=1e-4)
     extraction.add_argument('--atol', type=float, default=1e-5)
     prepare = sub.add_parser('preflight-request', help='CPU-check a retry selection using a previous job’s pinned assets')
     prepare.add_argument('--job-dir', type=Path, required=True)
     prepare.add_argument('--out', type=Path, required=True)
+    finalize = sub.add_parser('prepare-finalization', help='Snapshot a follow-up that reuses an existing job’s cached training work')
+    finalize.add_argument('--job-dir', type=Path, required=True)
+    finalize.add_argument('--out', type=Path, required=True)
+    finish = sub.add_parser('finalize-run', help='Finish final heads and reports without recollection or compressor training')
+    finish.add_argument('--plan', type=Path, required=True)
+    finish.add_argument('--device', default='auto')
     return p
 
 
@@ -336,7 +344,8 @@ def main():
     elif args.command == 'extraction-parity':
         from .extraction_parity import run_extraction_parity
         report = run_extraction_parity(args.study, args.model, args.original_root, args.out,
-            device=args.device, samples=args.samples, rtol=args.rtol, atol=args.atol)
+            device=args.device, samples=args.samples, rtol=args.rtol, atol=args.atol,
+            long_samples=args.long_samples, long_min_tokens=args.long_min_tokens)
         print(json.dumps(dict(matches=report['matches'], category_matches=report['category_matches'],
             max_absolute_error=report['max_absolute_error'], report=str(args.out / 'report.json')), indent=2))
         if not report['matches']:
@@ -344,3 +353,9 @@ def main():
     elif args.command == 'preflight-request':
         from .recovery import preflight_request
         print(json.dumps(preflight_request(args.job_dir, args.out), indent=2))
+    elif args.command == 'prepare-finalization':
+        from .finalization import prepare_finalization
+        print(json.dumps(prepare_finalization(args.job_dir, args.out), indent=2))
+    elif args.command == 'finalize-run':
+        from .finalization import finalize_job
+        print(json.dumps(finalize_job(args.plan, args.device), indent=2))

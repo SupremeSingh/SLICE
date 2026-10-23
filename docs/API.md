@@ -440,3 +440,40 @@ policy and inclusion/exclusion counts. New collections save effective generation
 EOS IDs and distinguish `eos`, `token_budget` and `unknown` termination. EOS at the
 exact generation limit is completion. Existing immutable artifacts are not
 rewritten; their historical termination flags and missing metadata remain as saved.
+
+Managed jobs now fit, calibrate, evaluate and publish one final head per requested
+training seed. The designated `seed` remains the primary artifact; other versions
+append `-seedN`. Status includes `artifact_paths` for all seeds. Evaluation reports
+per-seed metrics and their mean, not an ensemble and not the best test seed.
+
+Question-difficulty controls use one unique cached prompt-only feature vector per
+question. Identical cached prompt features are checked exactly, and scored once
+per head before broadcasting to continuation rows. This avoids treating changes
+in full-continuation execution shape as evidence of different question states.
+Historical caches without prompt-only anchors retain their strict legacy checks.
+Raw held-out prefix predictions and SLICE's fitting equations are unchanged.
+
+Unknown live Slurm states keep the active-job reservation. Only recognized
+terminal accounting can release it. In particular, a job still visible in
+`squeue` is never declared failed merely because its state is unfamiliar.
+
+### Ridge/LSTD interpretation
+
+Ridge and LSTD do not form a method-only comparison under the default policies:
+Ridge includes verifiable capped answers, whereas LSTD requires explicitly
+completed episodes. Their population metadata and exclusion counts are part of
+the artifact, and managed reports mark `method_only_comparison: false`.
+For a controlled comparison, both methods must use the same states, rewards,
+termination policy and data separation. A consuming system such as SCALE should
+use `encode_trajectory()` and retain its own capped-task rewards, cumulative
+matrices and question cross-fitting. SLICE does not implement those consuming
+algorithms.
+
+Managed correctness jobs require gamma=1. Low-level `fit-lstd` still accepts
+`--discount-gamma` below 1, but those artifacts predict discounted terminal
+rewards. They omit final binary-correctness validation and record why discounted
+validation was not evaluated; sampled-head selection history remains available.
+Scoring returns raw discounted values with an explicit target and gamma, without
+a 0.5 correctness decision or correctness probability calibration. Generic
+correctness evaluation rejects such heads. Evaluating them requires held-out
+transition sequences and discounted-return targets supplied by the consumer.
