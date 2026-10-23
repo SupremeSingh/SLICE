@@ -78,6 +78,46 @@ def test_registry_publication_is_atomic_and_immutable(fitted, tmp_path):
         inspect_artifact(path)
 
 
+def test_trajectory_features_use_one_pass_and_match_individual_prefixes(fitted):
+    _, _, checkpoint, backbone = fitted
+    critic = Critic.load(checkpoint, device='cpu')
+    ids, lengths, calls = [1, 2, 3, 4, 5, 6], [5, 3, 6, 3], []
+    handle = backbone.register_forward_pre_hook(lambda *args: calls.append('forward'))
+    try:
+        features = critic.encode_trajectory(ids, lengths, tokenizer_id=critic.tokenizer_id, batch_size=2)
+    finally:
+        handle.remove()
+    assert calls == ['forward']
+    expected = critic.encode_batch([dict(token_ids=ids[:n], tokenizer_id=critic.tokenizer_id) for n in lengths])
+    np.testing.assert_allclose(features, expected, rtol=1e-5, atol=1e-6)
+    np.testing.assert_array_equal(features[1], features[3])
+    assert features.shape == (4, critic.record['width']) and features.dtype == np.float32
+    assert all(not layer._forward_hooks for layer in backbone.layers)
+    assert critic.encode_trajectory(ids, [], tokenizer_id=critic.tokenizer_id).shape == (0, 2)
+    for bad in ([0], [-1], [7], [True], [1.5], '3'):
+        with pytest.raises(ValueError, match='prefix_lengths'):
+            critic.encode_trajectory(ids, bad, tokenizer_id=critic.tokenizer_id)
+    with pytest.raises(ValueError, match='tokenizer'):
+        critic.encode_trajectory(ids, [3], tokenizer_id='wrong')
+    with pytest.raises(ValueError, match='context'):
+        critic.encode_trajectory([1] * 129, [3], tokenizer_id=critic.tokenizer_id)
+    with pytest.raises(ValueError, match='batch_size'):
+        critic.encode_trajectory(ids, [3], tokenizer_id=critic.tokenizer_id, batch_size=0)
+
+
+def test_trajectory_encoder_failure_cleans_hooks(fitted, monkeypatch):
+    _, _, checkpoint, backbone = fitted
+    critic = Critic.load(checkpoint, device='cpu')
+
+    def fail(**kwargs):
+        raise RuntimeError('encoder failed')
+
+    monkeypatch.setattr(backbone, 'forward', fail)
+    with pytest.raises(RuntimeError, match='encoder failed'):
+        critic.encode_trajectory([1, 2, 3], [1, 3], tokenizer_id=critic.tokenizer_id)
+    assert all(not layer._forward_hooks for layer in backbone.layers)
+
+
 def test_http_scoring_matches_local_library_and_reuses_encoder(fitted, tmp_path):
     pytest.importorskip('fastapi')
     pytest.importorskip('httpx')

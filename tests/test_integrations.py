@@ -144,6 +144,16 @@ def test_published_resident_critic_matches_original_real_transformer_inference(t
     ids = critic._tokens(state)
     exact = dict(token_ids=ids, tokenizer_id=critic.tokenizer_id)
     np.testing.assert_array_equal(critic.encode_batch([state]), critic.encode_batch([exact]))
+    lengths = [len(ids), 1, len(ids) - 1, 1]
+    calls = []
+    handle = critic.encoder.register_forward_pre_hook(lambda *args: calls.append(1))
+    try:
+        trajectory = critic.encode_trajectory(ids, lengths, tokenizer_id=critic.tokenizer_id)
+    finally:
+        handle.remove()
+    assert calls == [1]
+    prefixes = [dict(token_ids=ids[:n], tokenizer_id=critic.tokenizer_id) for n in lengths]
+    np.testing.assert_allclose(trajectory, critic.encode_batch(prefixes), rtol=1e-5, atol=1e-6)
     assert not lm.training and not critic.encoder.training
     if pytest.importorskip('math_verify'):
         from importlib.util import find_spec

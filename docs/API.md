@@ -86,6 +86,30 @@ Exact research inputs may instead supply the **entire** prompt-plus-prefix token
 sequence, using `tokenizer_id=critic.tokenizer_id` and `token_ids=[...]`. Do not
 also supply text. The tokenizer identity is returned by artifact inspection.
 
+For many prefixes of one answer, use one causal encoder pass:
+
+```python
+# Exact IDs from the same tokenizer used by the artifact. No padding.
+prompt_ids = [...]
+response_ids = [...]
+lengths = [len(prompt_ids) + t for t in range(len(response_ids))]
+features = critic.encode_trajectory(
+    prompt_ids + response_ids, lengths,
+    tokenizer_id=critic.tokenizer_id, batch_size=1024,
+)
+```
+
+Each length is the total number of visible tokens, including the prompt. The
+first row sees the prompt only; the last sees all but the final response token.
+Lengths may be unsorted or repeated, and output follows their input order.
+Features remain float32 `[N, width]` without an intercept. Empty lengths return
+zero rows. Invalid tokens, tokenizer identities, lengths and context overflow
+raise errors. `batch_size` bounds compressor batches, not the encoder context.
+Causal masking prevents future-token access; numerical roundoff can differ from
+separate forwards. This interface supplies features, not transition rewards or
+terminal conventions; consuming algorithms own those. Hooks remain serialized
+within the resident instance. No rollout generation or policy training is added.
+
 CLI equivalents:
 
 ```bash
@@ -144,6 +168,22 @@ Each submitted attempt reserves its full wall-time allowance, including failed
 and cancelled work. This is not measured billing. One job may be active globally;
 uncertain submissions also hold that slot. Raise the allowance deliberately in
 the settings when needed. Do not keep SQLite on an NFS/Lustre filesystem.
+
+Managed requests are a bounded pilot service: **10–1,000 questions**, 2–8 answers
+per question, at most 3,584 new tokens, up to three training seeds, 30 epochs,
+width 768, and 1–1,440 requested minutes. There is one active job **per ledger**,
+including uncertain submissions, with a default cumulative allowance of 1,440
+reserved minutes. These limits do not describe the earlier large studies or
+restrict unrelated Slurm jobs. Larger studies use the standalone preparation,
+collection and training commands with explicit resource planning.
+
+Recovery reuses only completed stages with matching checksums. Collection can
+resume from complete per-question answer batches; an interrupted question's batch
+is regenerated. Other interrupted stages restart from their beginning. There
+are no within-epoch compressor or partial Ridge-matrix checkpoints. The original
+deadline persists across worker requeues, including elapsed time between attempts.
+Requeue therefore does not reset the time budget. Repeating `submit` returns the
+old attempt; it is not a retry command. See the [Duke recovery procedure](DUKE_CS.md#controller-backup-and-recovery).
 
 ## 5. Submit a training request
 

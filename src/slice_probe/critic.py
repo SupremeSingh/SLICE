@@ -18,8 +18,8 @@ from .registry import canonical_hash, feature_identity, inspect_artifact, versio
 class Critic:
     """One resident encoder/compressor. Calls serialize access to model hooks.
 
-    Batches currently execute unpadded states sequentially to preserve the original
-    feature conventions. encode_batch returns compressed features, without an
+    encode_batch executes unrelated unpadded states sequentially; encode_trajectory
+    shares one causal pass across prefixes of the same sequence. Features have no
     intercept column. score_batch reports validation errors per state.
     """
 
@@ -106,6 +106,42 @@ class Critic:
             if not tokens:
                 return np.empty((0, self.record['width']), dtype=np.float32)
             return np.stack([self._encode_ids(ids) for ids in tokens])
+
+    @torch.inference_mode()
+    def encode_trajectory(self, token_ids, prefix_lengths, *, tokenizer_id,
+                          batch_size=1024):
+        """Encode many prefixes in one causal encoder pass, preserving order.
+
+        token_ids are exact, unpadded prompt-plus-response IDs. Each prefix length
+        is a total visible-token count in [1, len(token_ids)], not an answer-only
+        offset. For prompt length P, pre-action states are P, P+1, ... . Duplicate
+        lengths are allowed. Returns (N, width) float32 features without an
+        intercept; terminal-state zeroing remains the caller's responsibility.
+        batch_size bounds compressor batches, not encoder sequence length.
+        """
+        if type(batch_size) is not int or batch_size < 1:
+            raise ValueError('batch_size must be a positive integer')
+        with self._lock:
+            ids = self._tokens(dict(token_ids=token_ids, tokenizer_id=tokenizer_id))
+            if (not isinstance(prefix_lengths, (list, tuple))
+                    or any(type(n) is not int or not 1 <= n <= len(ids) for n in prefix_lengths)):
+                raise ValueError('prefix_lengths must contain total token counts in [1, len(token_ids)]')
+            if not prefix_lengths:
+                return np.empty((0, self.record['width']), dtype=np.float32)
+            lengths, inverse = np.unique(prefix_lengths, return_inverse=True)
+            blocks = capture(self.encoder,
+                torch.tensor([ids[:int(lengths[-1])]], device=self.device),
+                (lengths - 1).tolist(), self.record['layers'])
+            x = concatenate(blocks, self.record['layers'], self.record['rms_eps'])
+            chunks = []
+            for start in range(0, len(x), batch_size):
+                values = x[start:start + batch_size].to(self.device)
+                chunks.append(self.compressor.features(
+                    (values - self._mean) / self._scale).cpu().numpy())
+            features = np.concatenate(chunks)
+            if not np.isfinite(features).all():
+                raise ValueError('Nonfinite compressed features')
+            return features[inverse]
 
     def score_batch(self, states, *, return_calibrated_probability=False):
         if return_calibrated_probability and self.calibrator is None:

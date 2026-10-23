@@ -53,6 +53,14 @@ def test_training_to_publication_resumes_without_duplicate_collection(fitted, tm
     monkeypatch.setattr(comparison, 'evaluate_comparison', original)
     run_job(root / 'request.json', device='cpu')
     assert collected == ['collected']
+    if head == 'ridge':
+        from slice_probe.parity import run_parity
+        from slice_probe.io import sha256
+        before = sha256(root / 'selected/ridge.pt')
+        report = run_parity(root, tmp_path / 'standalone-parity', device='cpu')
+        assert report['matches'] and report['selected_head']['matches']
+        assert report['predictions']['matches']
+        assert sha256(root / 'selected/ridge.pt') == before
     status = read_json(root / 'status.json')
     assert status['status'] == 'completed'
     assert read_json(root / 'comparison-config.json')['seeds'] == [7, 8, 9]

@@ -124,6 +124,11 @@ def parser():
     actions = jobs.add_subparsers(dest='action', required=True)
     init = actions.add_parser('init-cluster', help='Configure native Duke submission on this login host')
     init.add_argument('--state-dir', type=Path, help='Node-local ledger directory (default: /var/tmp/slice-controller-UID)')
+    init.add_argument('--host', default='compsci-login-01', help='Required initialization host (default: compsci-login-01)')
+    backup = actions.add_parser('backup', help='Write a consistent immutable controller snapshot')
+    backup.add_argument('--out', type=Path, required=True)
+    recover = actions.add_parser('restore', help='Recover a missing local ledger from a checked snapshot')
+    recover.add_argument('--backup', type=Path, required=True)
     for name in ('create', 'submit'):
         create = actions.add_parser(name, help='Record a request' if name == 'create' else
                                     'Create and submit once; this command authorizes compute')
@@ -137,6 +142,12 @@ def parser():
     worker = sub.add_parser('job-run', help='Run a prepared job inside its compute allocation')
     worker.add_argument('--job', type=Path, required=True)
     worker.add_argument('--device', default='auto')
+    parity = sub.add_parser('parity', help='Compare a completed managed Ridge job with standalone training on its saved data')
+    parity.add_argument('--job-dir', type=Path, required=True)
+    parity.add_argument('--out', type=Path, required=True)
+    parity.add_argument('--device', default='auto')
+    parity.add_argument('--rtol', type=float, default=1e-5)
+    parity.add_argument('--atol', type=float, default=1e-6)
     return p
 
 
@@ -242,8 +253,20 @@ def main():
                        regularization=args.regularization))
     elif args.command == 'jobs':
         if args.action == 'init-cluster':
-            from .controller import init_cluster
-            print(json.dumps(init_cluster(args.config, state_dir=args.state_dir), indent=2))
+            from .controller import init_cluster, backup_ledger
+            result = init_cluster(args.config, state_dir=args.state_dir, expected_host=args.host)
+            backup_ledger(args.config)
+            print(json.dumps(result, indent=2))
+            return
+        if args.action == 'restore':
+            from .controller import restore_ledger, backup_ledger
+            result = restore_ledger(args.config, args.backup)
+            backup_ledger(args.config)
+            print(json.dumps(result, indent=2))
+            return
+        if args.action == 'backup':
+            from .controller import backup_ledger
+            print(json.dumps(backup_ledger(args.config, args.out), indent=2))
             return
         from .jobs import JobStore
         from .slurm import settings, Slurm
@@ -254,6 +277,11 @@ def main():
         if args.action == 'create':
             result = store.create(args.project, args.idempotency_key, read_json(args.request))
         elif args.action == 'submit':
+            if config.get('controller_host'):
+                from .controller import backup_ledger
+                # Save the request identity before sbatch can possibly accept it.
+                store.create(args.project, args.idempotency_key, read_json(args.request))
+                backup_ledger(args.config)
             result = scheduler.submit(store, args.project, args.idempotency_key, read_json(args.request))
         elif args.action == 'list':
             result = store.list()
@@ -262,12 +290,25 @@ def main():
             result['preview'] = TrainingRequest.parse(result['request']).preview()
             result['launch'] = scheduler.plan(result)
         elif args.action == 'approve':
+            if config.get('controller_host'):
+                from .controller import backup_ledger
+                backup_ledger(args.config)
             result = scheduler.approve(store, args.id)
         elif args.action == 'refresh':
             result = scheduler.refresh(store, args.id)
         else:
             result = scheduler.cancel(store, args.id)
+        if config.get('controller_host') and args.action in ('create', 'submit', 'approve', 'refresh', 'cancel'):
+            from .controller import backup_ledger
+            backup_ledger(args.config)
         print(json.dumps(result, indent=2))
     elif args.command == 'job-run':
         from .worker import run_job
         run_job(args.job, device=args.device)
+    elif args.command == 'parity':
+        from .parity import run_parity
+        report = run_parity(args.job_dir, args.out, args.device, rtol=args.rtol, atol=args.atol)
+        print(json.dumps(dict(report=str(args.out / 'report.json'), matches=report['matches'],
+            numerical_matches=report['numerical_matches'], provenance_matches=report['provenance_matches']), indent=2))
+        if not report['matches']:
+            raise SystemExit(1)

@@ -95,6 +95,22 @@ class JobStore:
             rows = db.execute('SELECT * FROM jobs ORDER BY created DESC').fetchall()
             return [self.decode(row) for row in rows if project is None or row['project'] == project]
 
+    def backup(self, path):
+        """Produce a consistent standalone snapshot, including committed WAL data."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open('xb'):
+            pass
+        with self.connection() as source:
+            target = sqlite3.connect(path)
+            try:
+                source.backup(target)
+                if target.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
+                    raise ValueError('Controller backup integrity check failed')
+            finally:
+                target.close()
+        return path
+
     def update(self, identifier, status, *, scheduler_id=None, detail=None):
         with self.connection() as db:
             db.execute('UPDATE jobs SET status=?,scheduler_id=COALESCE(?,scheduler_id),'

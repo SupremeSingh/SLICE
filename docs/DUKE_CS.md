@@ -63,20 +63,27 @@ does not establish a CUDA or SLICE training failure.
 
 ## Submit directly from Duke
 
-Log in normally with `ssh ms785@login.cs.duke.edu`. Run these commands at the
-login prompt, using the already installed native environment:
+Log in normally with `ssh ms785@login.cs.duke.edu`, then connect to the controller
+host if the portal placed you elsewhere:
+
+```bash
+ssh ms785@compsci-login-01
+hostname
+```
+
+Run initialization on **compsci-login-01**, using the installed native environment:
 
 ```bash
 cd /usr/xtmp/ms785/SLICE
 source .venv-native/bin/activate
-python -m slice_probe jobs --config artifacts/cluster-service.json init-cluster
+python -m slice_probe jobs --config artifacts/cluster-service.json init-cluster --host compsci-login-01
 python -m slice_probe jobs --config artifacts/cluster-service.json submit \
   --request configs/training.example.json --project slice-pilot \
   --idempotency-key native-pilot-001
 ```
 
-`init-cluster` records the current Python executable, source checkout and login
-hostname. It creates a private SQLite ledger in `/var/tmp/slice-controller-UID`
+`init-cluster` checks the requested hostname before creating anything and records
+the current Python executable and source checkout. It creates a private SQLite ledger in `/var/tmp/slice-controller-UID`
 on that host, with jobs and critics under sibling `slice-service` and
 `slice-critics` directories on working storage. `/var/tmp` must be node-local;
 use `--state-dir` to select another node-local directory if needed. Existing
@@ -104,15 +111,84 @@ python -m slice_probe jobs --config artifacts/cluster-service.json list
 You may disconnect while training runs. Reconnect to the controller hostname
 printed during initialization for subsequent controller commands. Configuration
 rejects another host or a missing ledger rather than silently resetting job and
-budget history. Node-local storage is not a durable backup: preserve the ledger
-when the controller is idle; if lost, reconcile scheduler jobs and recover state
-before submitting again. Shared request/status files and published artifacts
+budget history. Node-local storage is not a durable backup; use the recovery
+procedure below. Shared request/status files and published artifacts
 remain in the job workspace and registry.
 
 From another project, use the absolute configuration and request paths. For
 example, the same command works in `/usr/xtmp/ms785/rl_ms_project` with
 `--config /usr/xtmp/ms785/SLICE/artifacts/cluster-service.json` and an absolute
 `--request` path. Install SLICE in that project's environment before calling it.
+
+## Check managed versus standalone training
+
+Reuse a completed Ridge job's saved questions and answers. This audit performs
+no generation and changes no original job or registry artifacts. From a login
+prompt in the checkout, submit a separate bounded GPU audit:
+
+```bash
+mkdir -p logs
+sbatch scripts/parity-native.sbatch /usr/xtmp/ms785/slice-service/jobs/fdb57872fc80423c81bdacd3a5a2be10
+```
+
+The audit requests one A5000, 64 GB and six hours. It is a direct Slurm job,
+separate from the controller's training-request allowance. Outputs are
+`artifacts/parity-SLURM_JOB_ID/report.json` and
+`logs/slice-native-parity-SLURM_JOB_ID.out`. It independently extracts features
+and calls standalone `training.fit` with the recorded seeds, hyperparameters and
+readout distribution. It compares array values and labels, normalization,
+compressor weights and validation-selected trial names for every seed, selected
+Ridge weights, and held-out raw predictions. Stored managed predictions are
+checked too. Checkpoint file bytes differ because timing and provenance differ.
+
+`matches: true` requires numerical agreement and matching core source, package,
+Python, thread and CUDA identities. Tolerances default to `rtol=1e-5, atol=1e-6`
+and are recorded alongside absolute errors and bitwise equality. A mismatch
+leaves the report and returns nonzero; an interrupted audit leaves partial
+outputs and needs a fresh output directory. It does not automatically resume.
+This checks the wrapper against the current standalone implementation on the
+same saved data, not the historical experiment or predictive usefulness.
+
+## Controller backup and recovery
+
+The on-cluster CLI automatically snapshots the local ledger before submission
+and after successful create/submit/approve/refresh/cancel commands, under
+`artifacts/controller-backups/`. Snapshots use SQLite's consistent backup API;
+they include configuration identity and a checksum, not copied live WAL files.
+Preserve configuration and snapshots on durable storage outside `/usr/xtmp`.
+For an explicit named snapshot, run on **compsci-login-01**:
+
+```bash
+python -m slice_probe jobs --config artifacts/cluster-service.json backup \
+  --out artifacts/controller-backups/before-parity
+```
+
+If the local ledger is lost, stop new submissions. Keep the existing shared
+configuration, inspect `squeue`, `sacct` and shared job directories, and choose
+the latest valid snapshot. On the same controller host:
+
+```bash
+python -m slice_probe jobs --config artifacts/cluster-service.json restore \
+  --backup artifacts/controller-backups/before-parity
+```
+
+Restore never overwrites an existing ledger and rejects checksum/configuration
+mismatches, a different host, or a snapshot missing a staged shared request.
+For each request ID returned in `reconcile`, run `jobs ... refresh --id ID`
+before submitting new work. Known staged nonterminal requests are held as
+`submission_unknown`, preserving reservations and duplicate protection. Missing
+scheduler records do not release that hold automatically. If restore refuses a
+stale snapshot, recover a newer ledger and reconcile with Slurm; do not delete
+the configuration, create a new ledger, or retry with a new key to bypass it.
+
+Managed requests cap questions at 1,000 and allow one active job per ledger.
+These are service-pilot limits, not historical study sizes. Only collection
+resumes within a stage, from complete per-question files. Feature extraction,
+compressor fitting, all-token Ridge, evaluation and publishing restart an
+unfinished stage; completed stages are reused only after checksum checks.
+Requeues retain the original deadline, and failed/cancelled attempts retain
+their full requested GPU-minute reservation. Use standalone commands for larger
+studies; resource changes require deliberate planning.
 
 ## Optional controller on your computer
 
