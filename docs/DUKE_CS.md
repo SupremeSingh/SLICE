@@ -218,7 +218,8 @@ resumes within a stage, from complete per-question files. Feature extraction,
 compressor fitting, all-token Ridge, evaluation and publishing restart an
 unfinished stage; completed stages are reused only after checksum checks.
 Requeues retain the original deadline, and failed/cancelled attempts retain
-their full requested GPU-minute reservation. Use standalone commands for larger
+their full requested GPU-minute reservation unless explicitly settled against
+verified terminal Slurm accounting. Use standalone commands for larger
 studies; resource changes require deliberate planning.
 
 ## Full-size training and layer selection
@@ -241,8 +242,8 @@ The observed CS GPU partition advertises a 90-day time limit. The full preset no
 requests 28 days (40,320 minutes), with an explicit controller
 `max_wall_minutes: 40320`. Default controllers retain a 24-hour ceiling.
 The longer ceiling permits the current serial pipeline; it is not an ETA or
-a scheduler guarantee. The cumulative allowance is still charged the entire
-requested time, plus previous attempts. Requeues retain their initial deadline,
+a scheduler guarantee. The cumulative allowance reserves the entire
+requested time, plus previous attempts unless explicitly settled. Requeues retain their initial deadline,
 and unfinished non-collection stages still restart. The original study's batched
 generation and sharding remain a separate scalability improvement. Preserve the
 existing controller database when increasing limits. Check current limits with:
@@ -250,6 +251,40 @@ existing controller database when increasing limits. Check current limits with:
 ```bash
 sinfo -p compsci-gpu -o "%P %l %G"
 ```
+
+## Recover from a prompt-length selection failure
+
+The original study excluded prompts over 512 tokens before selecting questions.
+Managed selection now applies this check with the smoke-tested tokenizer and
+the model's native prompt-plus-answer limit. It selects replacement eligible
+questions before assigning the requested splits. No prompt is truncated and the
+3,584-token answer allowance is retained.
+
+Before another long GPU attempt, submit a CPU-only request preflight:
+
+```bash
+mkdir -p logs
+sbatch scripts/preflight-request-native.sbatch /absolute/failed/job/directory
+```
+
+It pins the failed job's actual model and dataset revisions, scans eligible
+questions with the tokenizer budget, and writes
+`artifacts/request-preflight-SLURM_JOB_ID/report.json` and a ready `request.json`.
+Require `COMPLETED`, `0:0` and `ready: true` before using that request for a new
+submission key. The managed GPU worker repeats the eligibility check itself.
+
+On the controller host, reconcile and explicitly settle the failed attempt:
+
+```bash
+python -m slice_probe jobs --config artifacts/cluster-service.json settle --id REQUEST_ID
+```
+
+This does not delete its reservation history or retry it. It validates final
+Slurm elapsed-time accounting and stores `charged_minutes` plus an audit record.
+A four-minute failed allocation therefore need not occupy a 28-day lifetime
+allowance. Live or ambiguous jobs cannot be settled. Automatic controller
+backups also run after settlement. Submit the new preflight-produced request
+with a new key only after CPU preflight succeeds.
 
 ## Optional controller on your computer
 
@@ -351,3 +386,35 @@ the old failed request and outputs. No GPU check or NumPy/Torch upgrade is neede
 profile for experiments that explicitly need it. Set the image, runtime, matching
 Python environment and binds there; that mode also records the image checksum.
 It is not needed for the native setup above.
+
+## Fresh Qwen extraction parity before consuming original features
+
+From `/usr/xtmp/ms785/SLICE` on **compsci-login-01**, with `.venv-native` active:
+
+```bash
+mkdir -p logs
+sbatch scripts/extraction-parity-native.sbatch
+```
+
+This bounded GPU audit reads the original `numina-sparse-768-v1` study and model
+assets under `rl_ms_project`; it does not train or modify that project. For all
+three saved seeds, it compares original hooks, RMS normalization, preprocessing,
+compressed features and raw predictions against the public SLICE interface on
+three saved token sequences, using question-only and intermediate prefixes.
+It also checks one causal pass against prefix-only execution. Continuations are
+bounded to 128 tokens for this diagnostic. The report records exact token IDs,
+asset/code hashes, precision, environment, tolerances and maximum errors.
+
+Require `COMPLETED`, `0:0`, and `matches: true` in
+`artifacts/extraction-parity-JOB_ID/report.json`. This establishes extraction
+agreement for the checked inputs and precision. It uses a shared hash-verified
+Qwen backbone and does not establish historical generation/verifier/dataset
+selection equivalence. The existing saved-feature importer remains a separate
+check; run it once to publish the original weights:
+
+```bash
+sbatch scripts/import-original-native.sbatch
+```
+
+If those immutable versions already exist, use them; do not rerun publication
+with the same names. Neither audit requires another large training run.

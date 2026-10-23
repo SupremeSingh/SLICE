@@ -49,7 +49,7 @@ def load_questions(path):
     return rows
 
 
-def prepare_numina(out,counts,revision=None):
+def prepare_numina(out,counts,revision=None,*,question_filter=None):
     from datasets import load_dataset
     from huggingface_hub import HfApi
     dataset='AI-MO/NuminaMath-1.5'
@@ -69,6 +69,8 @@ def prepare_numina(out,counts,revision=None):
         if target is None:excluded['reference']+=1;continue
         key=family(question)
         if key in selected:excluded['duplicate_family']+=1;continue
+        if question_filter is not None and not question_filter(question):
+            excluded['prompt_budget']+=1;continue
         selected[key]=dict(id=f'numina-cn-k12/{i}',question=question,reference=target)
     ordered=sorted(selected.items(),key=lambda pair:hashlib.sha256(('slice-v1:'+pair[0]).encode()).hexdigest())
     if any(v<1 for v in counts.values()) or len(ordered)<sum(counts.values()):raise ValueError('Not enough eligible families for requested positive split sizes')

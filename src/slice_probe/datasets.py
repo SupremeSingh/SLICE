@@ -8,7 +8,34 @@ from .data import family, load_questions, number, reference
 from .io import require_empty, sha256, write_json
 
 
-def select_questions(rows, request):
+class PromptBudget:
+    """Eligibility only: never truncate or inspect generated answers."""
+    def __init__(self, tokenizer, context_limit, max_new_tokens):
+        if type(context_limit) is not int or context_limit <= max_new_tokens:
+            raise ValueError('Model context leaves no room for a prompt')
+        self.tokenizer = tokenizer
+        self.context_limit = context_limit
+        self.max_new_tokens = max_new_tokens
+        self.limit = min(512, context_limit - max_new_tokens)
+
+    def __call__(self, question):
+        from .features import prompt
+        length = len(self.tokenizer.encode(prompt(question), add_special_tokens=False))
+        return 0 < length <= self.limit
+
+
+def load_prompt_budget(identity, max_new_tokens):
+    from transformers import AutoTokenizer
+    from .features import model_location
+    from .io import read_json
+
+    directory, _ = model_location(identity['id'], identity['revision'], identity['hashes'])
+    tokenizer = AutoTokenizer.from_pretrained(directory, local_files_only=True)
+    return PromptBudget(tokenizer, read_json(directory / 'config.json')['max_position_embeddings'],
+                        max_new_tokens)
+
+
+def select_questions(rows, request, *, question_filter=None):
     """Select unique number-template families without examining model outcomes."""
     selected, excluded = {}, Counter()
     for index, row in enumerate(rows):
@@ -31,6 +58,9 @@ def select_questions(rows, request):
         if key in selected:
             excluded['duplicate_family'] += 1
             continue
+        if question_filter is not None and not question_filter(question):
+            excluded['prompt_budget'] += 1
+            continue
         selected[key] = dict(id=f'{request.dataset}/{request.dataset_split}/{index}',
                              question=question.strip(), reference=str(value))
         if len(selected) == request.max_questions:
@@ -47,7 +77,18 @@ def select_questions(rows, request):
     return questions, dict(excluded)
 
 
-def prepare_dataset(request, out):
+def prepare_dataset(request, out, *, encoder_identity=None):
+    budget = load_prompt_budget(encoder_identity, request.max_new_tokens) if encoder_identity else None
+    def record_budget():
+        if budget is not None:
+            from pathlib import Path
+            from .io import read_json
+            path = Path(out) / 'selection.json'
+            selected = read_json(path)
+            selected['prompt_budget'] = dict(encoder=encoder_identity,
+                max_prompt_tokens=budget.limit, context_limit=budget.context_limit,
+                max_new_tokens=request.max_new_tokens, truncation=False)
+            write_json(path, selected)
     if request.dataset == 'AI-MO/NuminaMath-1.5':
         if (request.question_column != 'problem' or request.reference_column != 'answer'
                 or request.dataset_split != 'train' or request.dataset_config is not None):
@@ -55,7 +96,10 @@ def prepare_dataset(request, out):
         # Delegate rather than duplicate: metadata filters, boxed-reference
         # validation, full eligible-family scan and slice-v1 ordering stay exact.
         from .data import prepare_numina
-        return prepare_numina(out, request.split_counts(), request.revision)
+        kwargs = dict(question_filter=budget) if budget is not None else {}
+        prepare_numina(out, request.split_counts(), request.revision, **kwargs)
+        record_budget()
+        return
     from datasets import load_dataset
     from huggingface_hub import HfApi
 
@@ -67,7 +111,7 @@ def prepare_dataset(request, out):
     rows = load_dataset(request.dataset, name=request.dataset_config,
                         split=request.dataset_split, revision=revision,
                         streaming=True, trust_remote_code=False)
-    questions, exclusions = select_questions(rows, request)
+    questions, exclusions = select_questions(rows, request, question_filter=budget)
     out = require_empty(out)
     path = out / 'questions.jsonl'
     path.write_text(''.join(json.dumps(q) + '\n' for q in questions))
@@ -78,3 +122,4 @@ def prepare_dataset(request, out):
         counts={s: sum(q['split'] == s for q in questions) for s in ('train', 'val', 'test')},
         exclusions=exclusions, seed=request.seed,
         scope='New deterministic family-separated pilot; no claim of semantic decontamination.'))
+    record_budget()

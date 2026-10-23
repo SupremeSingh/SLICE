@@ -38,7 +38,8 @@ def smoke(out, request, bundle, device, execution):
     check_data_runtime()
     if execution.get('gres') and not str(device).startswith('cuda'):
         raise ValueError('Allocated GPU is unavailable; check the container runtime and --nv')
-    model, tokenizer, identity = load_model('Qwen/Qwen2.5-Math-1.5B', device=device)
+    model, tokenizer, identity = load_model('Qwen/Qwen2.5-Math-1.5B',
+                                           revision=request.model_revision, device=device)
     layers = geometric_layers(len(model.layers), request.layer_base, request.num_slices)
     ids = tokenizer.encode(prompt('What is 1 + 1?'), add_special_tokens=False)
     if not ids or len(ids) + request.max_new_tokens > model.config.max_position_embeddings:

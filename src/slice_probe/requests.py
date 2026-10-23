@@ -16,6 +16,7 @@ class TrainingRequest:
     dataset_config: str | None = None
     dataset_split: str = 'train'
     revision: str | None = None
+    model_revision: str | None = None
     max_questions: int = 1000
     train_questions: int | None = None
     validation_questions: int | None = None
@@ -51,9 +52,11 @@ class TrainingRequest:
         for name in ('question_column', 'reference_column', 'dataset_split'):
             if not isinstance(getattr(request, name), str) or not getattr(request, name).strip():
                 raise ValueError(f'{name} must be a nonempty string')
-        for name in ('dataset_config', 'revision'):
+        for name in ('dataset_config', 'revision', 'model_revision'):
             if getattr(request, name) is not None and not isinstance(getattr(request, name), str):
                 raise ValueError(f'{name} must be a string')
+        if request.model_revision is not None and not re.fullmatch(r'[0-9a-f]{40}', request.model_revision):
+            raise ValueError('model_revision must be an immutable commit SHA')
         bounds = dict(max_questions=(10, 13000), responses_per_question=(2, 8),
                       max_new_tokens=(1, 3584), num_slices=(1, 28),
                       compression_width=(1, 768), epochs=(1, 30),

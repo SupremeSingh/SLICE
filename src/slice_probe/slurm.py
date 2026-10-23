@@ -99,6 +99,30 @@ class Slurm:
                 return current
             raise
 
+    def settle(self, store, identifier):
+        """Charge elapsed minutes only on explicit request and final Slurm proof.
+
+        Failed/cancelled work is not refunded automatically. Original requested
+        reservations and the scheduler record remain in the ledger for audit.
+        """
+        job = self.refresh(store, identifier)
+        if job['status'] not in TERMINAL or not job.get('scheduler_id'):
+            raise ValueError('Reconcile a terminal scheduler job before settling its budget')
+        scheduler_id = job['scheduler_id']
+        if self.command(['squeue', '--noheader', '--name', 'slice-' + identifier, '--format=%i']).strip():
+            raise ValueError('Scheduler job is still live; its full reservation must remain held')
+        lines = self.command(['sacct', '--noheader', '--parsable2', '--jobs', scheduler_id,
+            '--format=JobIDRaw,JobName%64,State%40,ExitCode,ElapsedRaw']).strip().splitlines()
+        rows = [line.split('|') for line in lines if line.split('|')[0] == scheduler_id]
+        if len(rows) != 1 or len(rows[0]) < 5:
+            raise ValueError('Final scheduler elapsed-time accounting is unavailable')
+        row = rows[0]
+        if (row[1] != 'slice-' + identifier
+                or row[2].split()[0] not in ('COMPLETED', 'FAILED', 'CANCELLED', 'TIMEOUT', 'OUT_OF_MEMORY', 'NODE_FAIL')
+                or not re.fullmatch(r'\d+:\d+', row[3]) or not row[4].isdigit()):
+            raise ValueError('Scheduler identity or terminal accounting cannot be verified')
+        return store.settle_budget(identifier, max(1, (int(row[4]) + 59) // 60), '|'.join(row))
+
     def command(self, arguments, *, stdin=None, timeout=30):
         if self.config.get('ssh_host'):
             command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',

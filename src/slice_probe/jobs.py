@@ -151,14 +151,31 @@ class JobStore:
                 raise ValueError('Only an awaiting-approval job may be submitted; reconcile uncertain submissions')
             if any(r['status'] in ACTIVE for r in rows):
                 raise ValueError('One training job is already active or awaiting reconciliation')
-            # Submitted wall-time reservations are deliberately not refunded on
-            # failure/cancellation: retries must not bypass the operator's budget.
-            reserved = sum(r['request']['wall_minutes'] for r in rows
+            # Failed/cancelled reservations are not refunded automatically.
+            # Only explicit scheduler-verified settlement substitutes elapsed time.
+            reserved = sum(r['detail'].get('charged_minutes', r['request']['wall_minutes']) for r in rows
                            if r['status'] != 'awaiting_approval' and r['detail'].get('reserved', False))
             if reserved + job['request']['wall_minutes'] > max_total_minutes:
                 raise ValueError('Configured cumulative GPU-minute allowance would be exceeded')
             db.execute('UPDATE jobs SET status=?,detail=?,updated=? WHERE id=?',
                        ('submitting', json.dumps({'reserved': True}), now(), identifier))
+        return self.get(identifier)
+
+    def settle_budget(self, identifier, minutes, accounting):
+        """Explicit operator action after scheduler-confirmed terminal accounting."""
+        if type(minutes) is not int or minutes < 1:
+            raise ValueError('Settled minutes must be a positive integer')
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            job = self.decode(db.execute('SELECT * FROM jobs WHERE id=?', (identifier,)).fetchone())
+            if job['status'] not in TERMINAL or not job['detail'].get('reserved'):
+                raise ValueError('Only a reserved terminal job may be settled')
+            if 'budget_settlement' not in job['detail']:
+                detail = dict(job['detail'], charged_minutes=minutes, budget_settlement=dict(
+                    requested_minutes=job['request']['wall_minutes'], charged_minutes=minutes,
+                    accounting=accounting, settled=now()))
+                db.execute('UPDATE jobs SET detail=?,updated=? WHERE id=?',
+                           (json.dumps(detail), now(), identifier))
         return self.get(identifier)
 
 

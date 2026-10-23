@@ -133,7 +133,7 @@ For this user's Duke CS cluster, start with the
 typed A5000 request and native Python launch; the generic example below is optional.
 
 For direct Duke use, run `jobs --config artifacts/cluster-service.json init-cluster`
-from the installed checkout on a login host, then use `submit` as shown below.
+from the installed checkout on **compsci-login-01**, then use `submit` as shown below.
 The [Duke guide](DUKE_CS.md#submit-directly-from-duke) covers node-local state and
 reconnection. No SSH automation or running server is required.
 
@@ -168,6 +168,13 @@ Each submitted attempt reserves its full wall-time allowance, including failed
 and cancelled work. This is not measured billing. One job may be active globally;
 uncertain submissions also hold that slot. Raise the allowance deliberately in
 the settings when needed. Do not keep SQLite on an NFS/Lustre filesystem.
+
+An operator may explicitly run `jobs ... settle --id ID` after a terminal job.
+Settlement checks that the scheduler ID is no longer live and validates its
+unique name, final state, exit code and elapsed seconds in `sacct`. It records
+rounded-up elapsed minutes as the budget charge, with a minimum of one minute,
+while preserving the requested allowance and accounting evidence. Repeating
+settlement does not refund twice. Unknown/live jobs retain their full reservation.
 
 Managed requests default to a bounded pilot service: **10–1,000 questions**, 2–8 answers
 per question, at most 3,584 new tokens, up to three training seeds, 30 epochs,
@@ -238,6 +245,10 @@ directly to the original `prepare-numina` implementation: verified, nonsynthetic
 the full eligible-family scan and `slice-v1` ordering. Other datasets retain the
 generic scalar-reference selector with a 100,000-row scan limit. Revisions are
 pinned; invalid/insufficient datasets fail explicitly.
+Managed selection also uses the smoke-tested tokenizer and native context to
+exclude empty/overlong prompts before deduplication selection is finalized and
+splits are assigned. It replenishes to the exact requested split sizes, records
+exclusions and context limits, and never truncates or filters by answer outcomes.
 
 Training reuses `fit_comparison`: all matched baselines, a supervised sparse
 compressor, validation-only choices, and the existing pre-test lock. The selected
@@ -379,3 +390,53 @@ Managed LSTD publication includes its statistics and trajectory manifest. When
 publishing manually, pass `--statistics artifacts/lstd/statistics.npz` and
 `--trajectory-manifest artifacts/trajectories/manifest.json` alongside the new
 checkpoint. A calibrator for the old Ridge checkpoint cannot be reused.
+
+## Feature consumer contract
+
+`Critic.load()` keeps the frozen encoder and compressor resident on the selected
+device. `encode_batch()` and `score_batch()` execute states **sequentially**;
+use `encode_trajectory()` for many prefixes of one answer. Its encoder activation
+memory grows with the largest requested prefix, and eager attention can grow
+quadratically with sequence length. Compressor `batch_size` does not bound that
+encoder memory. It returns CPU NumPy float32 features shaped `(prefixes, width)`.
+
+Exact-token calls never decode or retokenize. Prefix lengths count all visible
+tokens, including the prompt; saved block numbers are **one-based**, before the
+model's final learned normalization. Features contain no intercept, probability
+calibration or terminal-state zeroing. The feature transformation is frozen and
+independent of the optional prediction head.
+
+For GPU sharing, move the complete resident extractor together:
+
+```python
+critic.to('cpu')       # Offload encoder, compressor and preprocessing tensors.
+critic.to('cuda:0')    # Reload before the next extraction call.
+```
+
+Transfers serialize with inference and preserve `feature_id`. The caller must
+budget for the full resident encoder plus activations alongside other models.
+PyTorch may keep released CUDA memory reserved; `torch.cuda.empty_cache()` after
+offloading can release unused allocator blocks, but cannot free live tensors.
+Delete the critic and all references to its tensors when its lifetime ends.
+
+Raw scores are unrestricted linear values, including values outside `[0,1]`.
+Only an explicit `return_calibrated_probability=True` requests a probability.
+Calibration is bound to the exact checkpoint; replacing the head requires a new
+validation fit. `feature_id` excludes head weights and calibration, includes all
+feature tensors and encoder assets, and has an implementation-version contract.
+Version 1 preserves existing feature IDs; future transformation changes must bump
+`FEATURE_IMPLEMENTATION` in the registry implementation.
+
+Final checkpoints contain `validation` for their final head, with
+`validation_binding.head_id` identifying its feature transform and linear weights.
+The published manifest carries the same binding; its checkpoint SHA256 identifies
+the full serialized checkpoint. Sampled-head selection metrics are retained as
+`selection_validation_sampled_head`, separately from final-head validation.
+
+Ridge retains the original fitting policy: all verifiable nonempty answers,
+including capped answers, are eligible. LSTD uses only verifiable, explicitly
+completed training trajectories. Published `training_population` records each
+policy and inclusion/exclusion counts. New collections save effective generation
+EOS IDs and distinguish `eos`, `token_budget` and `unknown` termination. EOS at the
+exact generation limit is completion. Existing immutable artifacts are not
+rewritten; their historical termination flags and missing metadata remain as saved.

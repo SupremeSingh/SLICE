@@ -65,6 +65,31 @@ class Critic:
                 raise ValueError('Calibrator does not identify this checkpoint')
             self.calibrator = data['calibrators'][matches[0]]
 
+    def to(self, device):
+        """Move all resident feature tensors together; `to('cpu')` offloads CUDA.
+
+        Calls serialize with inference. The feature identity and raw head are
+        unchanged. CUDA's allocator may retain freed memory for reuse.
+        """
+        selected = resolve_device(device)
+        with self._lock:
+            try:
+                self.encoder.to(selected)
+                self.compressor.to(selected)
+                self._mean = self._mean.to(selected)
+                self._scale = self._scale.to(selected)
+            except Exception:
+                # A failed GPU reload may have moved only part of the model.
+                # Restore a coherent CPU instance before propagating the error.
+                self.encoder.cpu()
+                self.compressor.cpu()
+                self._mean = self._mean.cpu()
+                self._scale = self._scale.cpu()
+                self.device = 'cpu'
+                raise
+            self.device = selected
+        return self
+
     def _tokens(self, state):
         if not isinstance(state, dict):
             raise ValueError('Each state must be an object')

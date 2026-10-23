@@ -1,5 +1,6 @@
 """Exercise the actual supervised fitting pipeline across a worker restart."""
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -23,7 +24,8 @@ def test_training_to_publication_resumes_without_duplicate_collection(fitted, tm
     write_json(root / 'request.json', bundle)
     collected = []
 
-    def prepare(request, out):
+    def prepare(request, out, *, encoder_identity):
+        assert encoder_identity['id'] == 'toy'
         out.mkdir()
         questions = read_json(answers / 'questions.json')
         import json
@@ -71,6 +73,16 @@ def test_training_to_publication_resumes_without_duplicate_collection(fitted, tm
         assert status['evaluation']['head_training_distribution'] == 'all-training-tokens'
     manifest = inspect_artifact(status['artifact_path'])
     assert manifest['head']['method'] == head
+    from slice_probe.collection import load_split
+    from slice_probe.io import load_checkpoint
+    from slice_probe.metrics import metrics
+    from slice_probe.model import predict_features
+    published = load_checkpoint(Path(status['artifact_path']) / 'checkpoint.pt')
+    val, _ = load_split(root / 'features', 'val')
+    assert published['validation'] == metrics(val['y'], predict_features(published, val['x']))
+    assert published['selection_validation_sampled_head']
+    assert manifest['validation_binding'] == published['validation_binding']
+    assert manifest['training_population'] == published['training_population']
     assert manifest['features']['layers'] == [2]
     assert manifest['metadata']['project'] == 'example'
     assert set(status['evaluation']['baselines']) >= {'constant', 'final/ridge'}

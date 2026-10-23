@@ -136,7 +136,7 @@ def parser():
         create.add_argument('--project', required=True)
         create.add_argument('--idempotency-key', required=True)
     actions.add_parser('list')
-    for name in ('show', 'approve', 'refresh', 'cancel'):
+    for name in ('show', 'approve', 'refresh', 'cancel', 'settle'):
         action = actions.add_parser(name)
         action.add_argument('--id', required=True)
     worker = sub.add_parser('job-run', help='Run a prepared job inside its compute allocation')
@@ -153,6 +153,16 @@ def parser():
         original.add_argument('--' + name, type=Path, required=True)
     original.add_argument('--prefix', help='Artifact prefix (default: original-sparseWIDTH)')
     original.add_argument('--samples', type=int, default=512)
+    extraction = sub.add_parser('extraction-parity', help='Audit fresh Qwen extraction against original project functions')
+    for name in ('study', 'model', 'original-root', 'out'):
+        extraction.add_argument('--' + name, type=Path, required=True)
+    extraction.add_argument('--device', default='cuda')
+    extraction.add_argument('--samples', type=int, default=3)
+    extraction.add_argument('--rtol', type=float, default=1e-4)
+    extraction.add_argument('--atol', type=float, default=1e-5)
+    prepare = sub.add_parser('preflight-request', help='CPU-check a retry selection using a previous job’s pinned assets')
+    prepare.add_argument('--job-dir', type=Path, required=True)
+    prepare.add_argument('--out', type=Path, required=True)
     return p
 
 
@@ -301,9 +311,11 @@ def main():
             result = scheduler.approve(store, args.id)
         elif args.action == 'refresh':
             result = scheduler.refresh(store, args.id)
+        elif args.action == 'settle':
+            result = scheduler.settle(store, args.id)
         else:
             result = scheduler.cancel(store, args.id)
-        if config.get('controller_host') and args.action in ('create', 'submit', 'approve', 'refresh', 'cancel'):
+        if config.get('controller_host') and args.action in ('create', 'submit', 'approve', 'refresh', 'cancel', 'settle'):
             from .controller import backup_ledger
             backup_ledger(args.config)
         print(json.dumps(result, indent=2))
@@ -321,3 +333,13 @@ def main():
         from .original import import_original
         print(json.dumps(import_original(args.study, args.model, args.registry, args.out,
             prefix=args.prefix, samples=args.samples), indent=2))
+    elif args.command == 'extraction-parity':
+        from .extraction_parity import run_extraction_parity
+        report = run_extraction_parity(args.study, args.model, args.original_root, args.out,
+            device=args.device, samples=args.samples, rtol=args.rtol, atol=args.atol)
+        print(json.dumps(dict(matches=report['matches'], report=str(args.out / 'report.json')), indent=2))
+        if not report['matches']:
+            raise SystemExit(1)
+    elif args.command == 'preflight-request':
+        from .recovery import preflight_request
+        print(json.dumps(preflight_request(args.job_dir, args.out), indent=2))

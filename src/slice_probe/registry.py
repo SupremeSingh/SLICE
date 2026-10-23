@@ -30,10 +30,17 @@ def canonical_hash(value) -> str:
                                      allow_nan=False).encode()).hexdigest()
 
 
+FEATURE_IMPLEMENTATION = 'slice-frozen-features-v1'
+
+
 def feature_identity(record: dict) -> str:
     """Head-independent identity of the exact encoder and compressed coordinates."""
     spec = {key: record[key] for key in
             ('model', 'layers', 'rms_eps', 'input_dim', 'width')}
+    # v1 retains existing IDs. Bump this contract when transformation semantics
+    # change; subsequent versions become part of the digest, even with identical tensors.
+    if FEATURE_IMPLEMENTATION != 'slice-frozen-features-v1':
+        spec['implementation'] = FEATURE_IMPLEMENTATION
     spec['prompt'] = prompt('{question}')
     spec['precision'] = 'float32-eager-no-tf32'
     spec['tokenization'] = 'encode(prompt, special_tokens=False) + encode(prefix, special_tokens=False)'
@@ -125,6 +132,9 @@ def publish(checkpoint, registry, version, *, calibration=None, evaluation=None,
         collection = features.get('collection', {})
         manifest = dict(
             format='slice-critic-v1', version=version,
+            feature_implementation=FEATURE_IMPLEMENTATION,
+            training_population=record.get('training_population'),
+            validation=record.get('validation'), validation_binding=record.get('validation_binding'),
             feature_id=feature_identity(record), checkpoint_sha256=sha256(checkpoint),
             encoder=record['model'], tokenizer_id=canonical_hash(record['model']),
             features=dict(layers=record['layers'], layer_selection=record.get('layer_selection'),

@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .collection import iter_answers, retained
+from .collection import iter_answers, retained, fitting_population
 from .features import capture, concatenate, load_model
 from .io import load_checkpoint, read_json, require_empty, save_checkpoint, sha256, write_json
 from .model import restore
@@ -127,6 +127,7 @@ def extract_trajectories(checkpoint, answers, out, device='cpu', *, feature_mani
         collection_manifest_sha256=sha256(source / 'manifest.json'),
         questions_sha256=sha256(source / 'questions.json'),
         reward='zero except verified correctness on the final transition',
+        training_population=fitting_population(source, complete_only=True),
         terminal='zero next features including intercept; caps and unknown termination excluded',
         split='train', entries=entries, excluded=excluded))
     return out
@@ -179,11 +180,16 @@ def fit_lstd(checkpoint, trajectories, feature_manifest, out, *, trace_lambda=.9
                             regularization=regularization, intercept=True,
                             reward=manifest['reward'], terminal=manifest['terminal'],
                             statistics='raw sums', target='discounted verified final-answer outcome'),
+                  training_population=manifest.get('training_population', dict(
+                      policy='verified, explicitly completed training answers only',
+                      included_episodes=statistics.episodes, excluded=manifest['excluded'])),
                   trajectory_manifest_sha256=sha256(root / 'manifest.json'))
     # Validation used to select the frozen compressor/Ridge recipe is not an
     # evaluation of this newly fitted head.
     if 'validation' in result:
-        result['source_ridge_validation'] = result.pop('validation')
+        result['source_ridge_validation'] = result['validation'].copy()
+    from .training import update_validation
+    update_validation(result, Path(feature_manifest).parent)
     save_checkpoint(out / 'lstd.pt', result)
     np.savez(out / 'statistics.npz', a=statistics.a, b=statistics.b)
     write_json(out / 'fit.json', dict(head=result['head'], checks=checks,

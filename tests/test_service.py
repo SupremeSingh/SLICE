@@ -110,6 +110,50 @@ def test_idempotency_atomic_reservation_and_budget(config):
         store.reserve(second['id'], max_total_minutes=300)
 
 
+def test_explicit_settlement_uses_final_scheduler_elapsed_time_once(config, monkeypatch):
+    _, cfg = config
+    store, scheduler = JobStore(cfg['database']), Slurm(cfg)
+    request = dict(dataset='owner/data', wall_minutes=40320)
+    job = store.create('project', 'failed-long', request)
+    store.reserve(job['id'], max_total_minutes=43200)
+    store.update(job['id'], 'failed', scheduler_id='1234', detail={'reserved': True})
+    retry = store.create('project', 'retry', request)
+    with pytest.raises(ValueError, match='allowance'):
+        store.reserve(retry['id'], max_total_minutes=43200)
+
+    def command(args, **kwargs):
+        if args[0] == 'squeue':
+            return ''
+        assert 'ElapsedRaw' in args[-1]
+        return f'1234|slice-{job["id"]}|FAILED|1:0|245\n'
+
+    monkeypatch.setattr(scheduler, 'command', command)
+    result = scheduler.settle(store, job['id'])
+    assert result['detail']['charged_minutes'] == 5
+    assert result['detail']['budget_settlement']['requested_minutes'] == 40320
+    assert scheduler.settle(store, job['id']) == result
+    assert result['idempotency_key'] == 'failed-long'
+    store.reserve(retry['id'], max_total_minutes=43200)
+
+
+def test_budget_settlement_refuses_live_or_unverified_accounting(config, monkeypatch):
+    _, cfg = config
+    store, scheduler = JobStore(cfg['database']), Slurm(cfg)
+    job = store.create('project', 'failed', dict(dataset='owner/data'))
+    store.update(job['id'], 'failed', scheduler_id='1234', detail={'reserved': True})
+    monkeypatch.setattr(scheduler, 'command', lambda *a, **kw: '1234\n')
+    with pytest.raises(ValueError, match='still live'):
+        scheduler.settle(store, job['id'])
+    for accounting in ('', '1234|wrong-name|FAILED|1:0|245',
+                       f'1234|slice-{job["id"]}|RUNNING|0:0|245',
+                       f'1234|slice-{job["id"]}|FAILED|1:0|'):
+        monkeypatch.setattr(scheduler, 'command', lambda args, **kw:
+                            '' if args[0] == 'squeue' else accounting)
+        with pytest.raises(ValueError):
+            scheduler.settle(store, job['id'])
+    assert 'charged_minutes' not in store.get(job['id'])['detail']
+
+
 def test_submission_timeout_is_not_retried_and_can_be_reconciled(config, monkeypatch):
     _, cfg = config
     store, scheduler = JobStore(cfg['database']), Slurm(cfg)

@@ -8,12 +8,52 @@ from .features import load_model,prompt,geometric_layers,sample_positions,captur
 from .io import read_json,write_json,sha256,require_empty
 
 
+def effective_eos_ids(model, tokenizer):
+    """GenerationConfig takes precedence over tokenizer defaults, as in generate()."""
+    config = getattr(model, 'generation_config', None)
+    value = getattr(config, 'eos_token_id', None)
+    if value is None:
+        value = getattr(model.config, 'eos_token_id', None)
+    if value is None:
+        return []
+    return [int(value)] if isinstance(value, int) else [int(v) for v in value]
+
+
+def termination(tail, budget, eos_ids):
+    if tail and tail[-1] in eos_ids:
+        return dict(termination_reason='eos', capped=False)
+    if len(tail) >= budget:
+        return dict(termination_reason='token_budget', capped=True)
+    return dict(termination_reason='unknown', capped=None)
+
+
+def fitting_population(answers, *, complete_only=False):
+    """Disjoint answer counts, preserving the historical Ridge inclusion policy."""
+    counts = dict(total=0, included=0, excluded_unverified=0,
+                  excluded_capped_or_unknown=0, included_capped=0, included_unknown=0)
+    for _, _, batch, _ in iter_answers(answers, 'train'):
+        for row in batch['responses']:
+            counts['total'] += 1
+            if not retained(row):
+                counts['excluded_unverified'] += 1
+            elif complete_only and row.get('capped') is not False:
+                counts['excluded_capped_or_unknown'] += 1
+            else:
+                counts['included'] += 1
+                counts['included_capped'] += row.get('capped') is True
+                counts['included_unknown'] += row.get('capped') is None
+    return dict(policy=('verified, explicitly completed training answers only' if complete_only
+                        else 'all verifiable nonempty training answers, including capped/unknown termination'),
+                counts=counts)
+
+
 def collect(questions_path,out,model,revision,device,responses=8,max_new_tokens=3584,seed=271828):
     questions=load_questions(questions_path)
     if responses<1 or max_new_tokens<1:raise ValueError('Positive generation budgets required')
     loaded,tokenizer,identity=load_model(model,revision,device,'bfloat16' if device.startswith('cuda') and torch.cuda.is_bf16_supported() else 'float32',causal=True)
     out=Path(out);out.mkdir(parents=True,exist_ok=True)
-    cfg=dict(format='slice-answers-v1',model=identity,questions_sha256=sha256(questions_path),
+    eos_ids = effective_eos_ids(loaded, tokenizer)
+    cfg=dict(effective_eos_token_ids=eos_ids, termination_policy='effective-eos-before-budget-v1', format='slice-answers-v1',model=identity,questions_sha256=sha256(questions_path),
         responses=responses,max_new_tokens=max_new_tokens,seed=seed,temperature=1.,
         top_p=1.,top_k=0,do_sample=True,prompt_version='completion-boxed-v1',
         generation_dtype=str(next(loaded.parameters()).dtype))
@@ -47,10 +87,10 @@ def collect(questions_path,out,model,revision,device,responses=8,max_new_tokens=
             with torch.inference_mode():
                 output=loaded.generate(input_ids=tokens,attention_mask=torch.ones_like(tokens),do_sample=True,
                     temperature=1.,top_p=1.,top_k=0,max_new_tokens=max_new_tokens,
-                    pad_token_id=tokenizer.eos_token_id,use_cache=True)
+                    pad_token_id=tokenizer.eos_token_id,eos_token_id=eos_ids or None,use_cache=True)
             tail=output[0,len(ids):].tolist();text=tokenizer.decode(tail,skip_special_tokens=True)
             score=grade(text,q['reference']) if tail else dict(score=None,status='empty_response',extracted=None)
-            answers.append(dict(text=text,token_ids=tail,capped=len(tail)>=max_new_tokens,**score))
+            answers.append(dict(text=text,token_ids=tail,**termination(tail,max_new_tokens,eos_ids),**score))
         write_json(path,dict(id=q['id'],prompt_ids=ids,responses=answers))
         print(f'Saved {i+1}/{len(questions)}: {q["id"]}',flush=True)
 
@@ -149,6 +189,7 @@ def extract(answers,out,device,layer_base=2.0,num_slices=None,baselines=False,ch
         split_examples[split]=len(values['y'])
     write_json(out/'questions.json',read_json(answers/'questions.json'))
     write_json(out/'manifest.json',dict(format='slice-features-v1',model=identity,layers=layers,rms_eps=epsilon,
+        training_population=fitting_population(answers),
         dimension=dim,representations=representations,checkpoint_positions=checkpoints,
         anchor_counts=anchor_counts,questions_sha256=sha256(out/'questions.json'),
         collection=cfg,layer_selection=dict(base=layer_base,num_slices=num_slices,

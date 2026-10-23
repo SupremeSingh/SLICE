@@ -60,11 +60,13 @@ def fit_optional_head(out, fitted, features, answers, request, device):
     out.mkdir()
     checkpoint = fitted / 'slice' / f'sparse-seed{request.seed}.pt'
     if request.head == 'ridge' and request.ridge_states == 'all-training-tokens':
-        from .training import all_token_ridge
+        from .training import all_token_ridge, update_validation
         record = load_checkpoint(checkpoint)
         record['weights'], record['fit_checks'] = all_token_ridge(
             record, read_json(features / 'manifest.json'), answers, device, request.regularization)
         record['ridge_states'] = 'all-training-tokens'
+        record['training_population'] = record['fit_checks']['training_population']
+        update_validation(record, features, device)
         checkpoint = out / 'ridge.pt'
         save_checkpoint(checkpoint, record)
     if request.head == 'lstd':
@@ -131,6 +133,7 @@ def evaluate_selected(out, selected, features, comparison_report, device):
         head=record.get('head', {'method': 'ridge'}),
         within_question=within,
         head_training_distribution=record.get('ridge_states'),
+        training_population=record.get('training_population'),
         baseline_training_distribution='matched sampled prefixes',
         scope='New pilot, conditional on verifiable answers. Selected all-token Ridge or LSTD fitting '
               'differs from matched sampled-prefix baselines. Raw values and calibrated probabilities are distinct.'))
@@ -198,7 +201,8 @@ def run_job(path, *, device='auto'):
 
             gate = execute('smoke', lambda out: smoke(out, request, bundle, device, execution))
             smoke_report = check_gate(gate / 'report.json', bundle, execution)
-            questions = execute('questions', lambda out: prepare_dataset(request, out))
+            questions = execute('questions', lambda out: prepare_dataset(
+                request, out, encoder_identity=smoke_report['model']))
             answers = execute('answers', lambda out: collect(
                 questions / 'questions.jsonl', out, 'Qwen/Qwen2.5-Math-1.5B', smoke_report['model']['revision'],
                 device, request.responses_per_question, request.max_new_tokens, request.generation_seed))

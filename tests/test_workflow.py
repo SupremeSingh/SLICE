@@ -181,7 +181,17 @@ def test_standalone_copy_has_no_parent_imports(tmp_path):
     result=subprocess.run([sys.executable,'-m','slice_probe','--help'],cwd=tmp_path,env=env,text=True,capture_output=True,check=True)
     assert 'prepare-numina' in result.stdout and 'predict' in result.stdout
     for path in (copied/'src').rglob('*.py'):
-        assert 'math_rl' not in path.read_text()
+        # The opt-in extraction audit reads reference source files by path;
+        # normal library imports must remain independent of that project.
+        import ast
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                assert not (node.module or '').startswith('math_rl')
+            elif isinstance(node, ast.Import):
+                assert all(not name.name.startswith('math_rl') for name in node.names)
+        if path.name != 'extraction_parity.py':
+            assert 'math_rl' not in path.read_text()
 
 
 def test_standalone_copy_does_not_traverse_environments_or_test_output(tmp_path):

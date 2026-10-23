@@ -106,7 +106,28 @@ def all_token_ridge(record, manifest, answers, device, epsilon):
     if not count:
         raise ValueError('No retained training-token states')
     weights, checks = solve_ridge(a, b, epsilon)
-    return weights, dict(checks, training_prefixes=count)
+    from .collection import fitting_population
+    return weights, dict(checks, training_prefixes=count, training_population=fitting_population(answers))
+
+
+def update_validation(record, features, device='cpu'):
+    """Bind validation to the exact feature transformation and final linear head."""
+    import hashlib
+    from .registry import feature_identity, canonical_hash
+    val, _ = load_split(features, 'val')
+    if 'validation' in record and 'selection_validation_sampled_head' not in record:
+        record['selection_validation_sampled_head'] = record['validation'].copy()
+        record['selection_validation_sampled_head_binding'] = record.get('validation_binding')
+    digest = hashlib.sha256(feature_identity(record).encode())
+    weights = record['weights'].detach().cpu().contiguous()
+    digest.update(canonical_hash([str(weights.dtype), list(weights.shape),
+                                 record.get('head', {'method': 'ridge'})]).encode())
+    digest.update(weights.numpy().tobytes())
+    record['validation'] = metrics(val['y'], predict_features(record, val['x'], device))
+    record['validation_binding'] = dict(head_id=digest.hexdigest(),
+        feature_manifest_sha256=sha256(Path(features) / 'manifest.json'),
+        split='val', population='saved sampled validation prefixes', raw_values=True)
+    return record
 
 
 def fit(features, out, width=768, kinds=('plain', 'sparse'), seeds=(42, 43, 44),
@@ -171,10 +192,11 @@ def fit(features, out, width=768, kinds=('plain', 'sparse'), seeds=(42, 43, 44),
                     layer_selection=manifest.get('layer_selection'),
                     kind=kind, seed=seed, penalty=penalty, learning_rate=lr, validation_curve=curve,
                     train_prior=float(train['y'].mean()), ridge_states='sampled',
+                    training_population=dict(manifest.get('training_population', {}),
+                        states='eight sampled prefixes per verifiable answer'),
                     feature_manifest_sha256=sha256(Path(features) / 'manifest.json'),
                     fit_checks=checks, seconds=time.perf_counter() - started)
-                scores = predict_features(record, val['x'], device)
-                record['validation'] = metrics(val['y'], scores)
+                update_validation(record, features, device)
                 name = f'{kind}-seed{seed}-lr{lr}.pt'
                 save_checkpoint(out / name, record)
                 candidates.append((record['validation']['brier'], name))
@@ -188,6 +210,9 @@ def fit(features, out, width=768, kinds=('plain', 'sparse'), seeds=(42, 43, 44),
                 record['weights'], record['fit_checks'] = all_token_ridge(record, manifest, answers, device, epsilon)
                 record['ridge_states'] = 'all-training-tokens'
                 record['all_token_fit_seconds'] = time.perf_counter() - started
+            update_validation(record, features, device)
+            if 'training_population' in record['fit_checks']:
+                record['training_population'] = record['fit_checks']['training_population']
             final = out / f'{kind}-seed{seed}.pt'
             save_checkpoint(final, record)
             selections[f'{kind}-{seed}'] = dict(path=final.name, sha256=sha256(final),
