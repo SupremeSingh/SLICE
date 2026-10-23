@@ -171,7 +171,7 @@ the settings when needed. Do not keep SQLite on an NFS/Lustre filesystem.
 
 Managed requests default to a bounded pilot service: **10–1,000 questions**, 2–8 answers
 per question, at most 3,584 new tokens, up to three training seeds, 30 epochs,
-width 768, and 1–1,440 requested minutes. There is one active job **per ledger**,
+width 768, and up to 1,440 requested minutes under default controller settings. There is one active job **per ledger**,
 including uncertain submissions, with a default cumulative allowance of 1,440
 reserved minutes. These limits do not describe the earlier large studies or
 restrict unrelated Slurm jobs. Research requests support up to **13,000 total
@@ -183,11 +183,13 @@ service example proposes a 43,200-minute cumulative reservation allowance and
 96 GB RAM. Keep the existing database, host and history when updating limits;
 do not initialize a new controller or overwrite working settings with a template.
 
-The 24-hour per-request limit remains. These configuration changes do not add
-batched generation, generation arrays, partial feature extraction, or training
-checkpoints. A fresh full-size serial run may exceed that limit. Reuse original
-saved data or implement bounded resumable stages before submitting the full
-preset. Confirm the cluster's partition time limits first.
+Research requests can explicitly raise `max_wall_minutes` up to 43,200 minutes.
+The full preset requests 40,320 minutes (28 days), within the observed Duke CS
+partition's 90-day limit. Its controller profile allows 43,200 cumulative reserved
+minutes, including prior attempts. This permits a bounded serial run without
+changing generation mathematics; it is a time ceiling, not a runtime estimate.
+It does not add generation arrays, partial feature extraction or within-epoch
+checkpoints. Requeue and recovery retain the original elapsed-time deadline.
 
 Recovery reuses only completed stages with matching checksums. Collection can
 resume from complete per-question answer batches; an interrupted question's batch

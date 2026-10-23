@@ -57,7 +57,7 @@ class TrainingRequest:
         bounds = dict(max_questions=(10, 13000), responses_per_question=(2, 8),
                       max_new_tokens=(1, 3584), num_slices=(1, 28),
                       compression_width=(1, 768), epochs=(1, 30),
-                      seed=(0, 2**31 - 1), generation_seed=(0, 2**31 - 1), wall_minutes=(1, 1440))
+                      seed=(0, 2**31 - 1), generation_seed=(0, 2**31 - 1), wall_minutes=(1, 43200))
         for name, (low, high) in bounds.items():
             value = getattr(request, name)
             if type(value) is not int or not low <= value <= high:

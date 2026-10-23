@@ -49,6 +49,20 @@ def test_controller_requires_explicit_opt_in_before_planning_large_job():
                request=TrainingRequest.parse(research_request()).to_dict())
     with pytest.raises(ValueError, match='explicitly raise'):
         Slurm(cfg).plan(job)
-    plan = Slurm(dict(cfg, max_questions=13000, max_total_minutes=43200)).plan(job)
-    assert '--time=1440' in plan['sbatch']
+    with pytest.raises(ValueError, match='max_wall_minutes'):
+        Slurm(dict(cfg, max_questions=13000)).plan(job)
+    plan = Slurm(dict(cfg, max_questions=13000, max_wall_minutes=40320,
+                      max_total_minutes=43200)).plan(job)
+    assert '--time=40320' in plan['sbatch']
     assert plan['bundle']['request']['train_questions'] == 10000
+
+
+def test_research_walltime_limits_remain_bounded():
+    for wall in (True, 0, 43201):
+        with pytest.raises(ValueError):
+            TrainingRequest.parse(dict(research_request(), wall_minutes=wall))
+    cfg = dict(database='/tmp/jobs.sqlite', registry='/cluster/critics',
+        cluster_root='/cluster/jobs', cluster_python='/cluster/python', partition='gpu')
+    for limit in (True, 0, 43201):
+        with pytest.raises(ValueError, match='max_wall_minutes'):
+            Slurm(dict(cfg, max_wall_minutes=limit))

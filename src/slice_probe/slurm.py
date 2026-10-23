@@ -71,6 +71,9 @@ def validate_settings(value):
     if (type(config.get('max_questions', 1000)) is not int
             or not 10 <= config.get('max_questions', 1000) <= 13000):
         raise ValueError('max_questions must be an integer in [10, 13000]')
+    if (type(config.get('max_wall_minutes', 1440)) is not int
+            or not 1 <= config.get('max_wall_minutes', 1440) <= 43200):
+        raise ValueError('max_wall_minutes must be an integer in [1, 43200]')
     return config
 
 
@@ -114,6 +117,8 @@ class Slurm:
         """Render the exact launch plan without SSH, file writes or submission."""
         if job['request']['max_questions'] > self.config.get('max_questions', 1000):
             raise ValueError('Request exceeds controller max_questions; explicitly raise the research limit first')
+        if job['request']['wall_minutes'] > self.config.get('max_wall_minutes', 1440):
+            raise ValueError('Request exceeds controller max_wall_minutes; explicitly raise the research time limit first')
         identifier = job['id']
         directory = self.directory(identifier)
         execution = {name: self.config.get(name) for name in

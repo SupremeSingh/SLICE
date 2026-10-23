@@ -237,11 +237,15 @@ and the original 30 epochs and three seeds. The operator example
 (30 one-GPU days). This is a proposed upper bound, not a reservation or runtime
 estimate. Preserve the existing ledger and host when updating settings.
 
-Do not submit this full preset to the current serial collector merely by
-increasing its allowance: each request still has a 24-hour ceiling and requeues
-retain their deadline. The original study used batched generation and sharded
-statistics. Prefer the saved original 10k-question data; fresh large generation
-needs a bounded stage/shard execution plan. Check partition limits first:
+The observed CS GPU partition advertises a 90-day time limit. The full preset now
+requests 28 days (40,320 minutes), with an explicit controller
+`max_wall_minutes: 40320`. Default controllers retain a 24-hour ceiling.
+The longer ceiling permits the current serial pipeline; it is not an ETA or
+a scheduler guarantee. The cumulative allowance is still charged the entire
+requested time, plus previous attempts. Requeues retain their initial deadline,
+and unfinished non-collection stages still restart. The original study's batched
+generation and sharding remain a separate scalability improvement. Preserve the
+existing controller database when increasing limits. Check current limits with:
 
 ```bash
 sinfo -p compsci-gpu -o "%P %l %G"

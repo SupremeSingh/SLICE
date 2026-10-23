@@ -11,6 +11,7 @@
   "cpus": 8,
   "memory_gb": 96,
   "max_questions": 13000,
+  "max_wall_minutes": 40320,
   "max_total_minutes": 43200,
   "controller_host": "compsci-login-01",
   "require_existing_database": true

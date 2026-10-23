@@ -15,5 +15,5 @@
   "training_seeds": [42, 43, 44],
   "head": "ridge",
   "ridge_states": "all-training-tokens",
-  "wall_minutes": 1440
+  "wall_minutes": 40320
 }
