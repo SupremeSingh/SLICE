@@ -22,6 +22,24 @@ def original_module(root, relative):
     return module
 
 
+def numerical_comparison(expected, observed, *, rtol, atol):
+    """Keep the acceptance tolerance fixed and expose the scale of any failure."""
+    a = expected.detach().cpu().numpy() if torch.is_tensor(expected) else np.asarray(expected)
+    b = observed.detach().cpu().numpy() if torch.is_tensor(observed) else np.asarray(observed)
+    result = compare_arrays(a, b, rtol=rtol, atol=atol)
+    if a.shape == b.shape and a.size and np.isfinite(a).all() and np.isfinite(b).all():
+        reference, actual = a.astype(np.float64), b.astype(np.float64)
+        delta = np.abs(reference - actual)
+        allowance = atol + rtol * np.abs(reference)
+        index = np.unravel_index(np.argmax(delta), delta.shape)
+        result.update(elements=int(a.size), outside_tolerance=int(np.count_nonzero(delta > allowance)),
+            reference_rms=float(np.sqrt(np.mean(reference ** 2))),
+            relative_l2_error=float(np.linalg.norm(delta) / max(np.linalg.norm(reference), 1e-30)),
+            worst_absolute=dict(index=list(map(int, index)), expected=float(reference[index]),
+                observed=float(actual[index]), allowance=float(allowance[index])))
+    return result
+
+
 @torch.inference_mode()
 def audit_sequence(critic, token_ids, prompt_length, original_blocks, original_rms,
                    original_compressor, *, rtol=1e-4, atol=1e-5):
@@ -36,12 +54,12 @@ def audit_sequence(critic, token_ids, prompt_length, original_blocks, original_r
     tokens = torch.tensor([token_ids], device=critic.device)
     reference = original_blocks(critic.encoder, tokens, prompt_length, response_length, positions, zero_layers)
     actual = capture(critic.encoder, tokens, [n - 1 for n in lengths], layers)
-    checks = {}
+    checks, categories = {}, {}
 
-    def compare(name, expected, observed):
-        a = expected.detach().cpu().numpy() if torch.is_tensor(expected) else np.asarray(expected)
-        b = observed.detach().cpu().numpy() if torch.is_tensor(observed) else np.asarray(observed)
-        checks[name] = compare_arrays(a, b, rtol=rtol, atol=atol)
+    def compare(name, expected, observed, category='source_implementation'):
+        checks[name] = numerical_comparison(expected, observed, rtol=rtol, atol=atol)
+        checks[name]['category'] = category
+        categories.setdefault(category, []).append(name)
 
     for layer in layers:
         compare(f'block-{layer}', reference[layer - 1].float(), actual[layer])
@@ -52,22 +70,37 @@ def audit_sequence(critic, token_ids, prompt_length, original_blocks, original_r
                 / critic.record['scale'].to(critic.device))
     compare('centering_scaling', centered, (x.to(critic.device) - critic._mean) / critic._scale)
     zref = original_compressor.features(centered).cpu()
+    # Compare compressors on the SAME captured forward, independently of the
+    # public API's intentional truncation to the largest requested prefix.
+    zsame = critic.compressor.features((x.to(critic.device) - critic._mean) / critic._scale).cpu()
+    compare('compressed_features', zref, zsame)
     z = critic.encode_trajectory(token_ids, lengths, tokenizer_id=critic.tokenizer_id)
-    compare('compressed_features', zref, z)
+    compare('public_trajectory_features', zref, z, 'prefix_execution')
     w = critic.record['weights'].double().cpu()
     compare('raw_predictions', zref.double() @ w[:-1] + w[-1],
-            z.astype(np.float64) @ w[:-1].numpy() + float(w[-1]))
+            zsame.double() @ critic._weights[:-1] + critic._weights[-1])
     scored = critic.score_batch([dict(token_ids=token_ids[:length], tokenizer_id=critic.tokenizer_id)
                                  for length in lengths])
     compare('public_raw_predictions', zref.double() @ w[:-1] + w[-1],
-            np.asarray([row['raw_value'] for row in scored], dtype=np.float64))
+            np.asarray([row['raw_value'] for row in scored], dtype=np.float64), 'prefix_execution')
     for index, length in enumerate(lengths):
+        # Change only future IDs while keeping every tensor shape identical.
+        # This isolates causal masking from shape-dependent floating-point math.
+        altered = tokens.clone()
+        vocab = getattr(critic.encoder.config, 'vocab_size', max(token_ids) + 2)
+        altered[:, length:] = (altered[:, length:] + 1) % vocab
+        unchanged = capture(critic.encoder, altered, [n - 1 for n in lengths], layers)
         prefix = capture(critic.encoder, tokens[:, :length], [length - 1], layers)
         for layer in layers:
-            compare(f'causal-prefix-{length}-block-{layer}', actual[layer][index:index+1], prefix[layer])
+            compare(f'fixed-shape-prefix-{length}-block-{layer}', actual[layer][index:index+1],
+                    unchanged[layer][index:index+1], 'fixed_shape_causality')
+            compare(f'causal-prefix-{length}-block-{layer}', actual[layer][index:index+1],
+                    prefix[layer], 'prefix_execution')
         single = critic.encode_trajectory(token_ids[:length], [length], tokenizer_id=critic.tokenizer_id)
-        compare(f'causal-prefix-{length}-features', z[index:index+1], single)
+        compare(f'causal-prefix-{length}-features', z[index:index+1], single, 'prefix_execution')
     return dict(prefix_lengths=lengths, question_only_prefix=prompt_length, checks=checks,
+                category_matches={category:all(checks[name]['matches'] for name in names)
+                                  for category, names in categories.items()},
                 matches=all(item['matches'] for item in checks.values()))
 
 
@@ -131,6 +164,9 @@ def run_extraction_parity(study, model, original_root, out, *, device='cuda', sa
                 sequence['prompt_length'], blocks.sampled_block_states, rms.rms_coordinates,
                 original, rtol=rtol, atol=atol)) for sequence in sequences])
         identity_before = critic.feature_id
+        first = sequences[0]
+        lengths = results[str(seed)]['sequences'][0]['audit']['prefix_lengths']
+        before_reload = critic.encode_trajectory(first['token_ids'], lengths, tokenizer_id=critic.tokenizer_id)
         target = critic.device
         critic.to('cpu')
         cpu_tensors = [*critic.encoder.parameters(), *critic.compressor.parameters(),
@@ -138,11 +174,11 @@ def run_extraction_parity(study, model, original_root, out, *, device='cuda', sa
         offloaded = all(value.device.type == 'cpu' for value in cpu_tensors)
         del cpu_tensors
         critic.to(target)
-        first = sequences[0]
-        reloaded = audit_sequence(critic, first['token_ids'], first['prompt_length'],
-            blocks.sampled_block_states, rms.rms_coordinates, original, rtol=rtol, atol=atol)
+        after_reload = critic.encode_trajectory(first['token_ids'], lengths, tokenizer_id=critic.tokenizer_id)
+        reloaded = numerical_comparison(before_reload, after_reload, rtol=rtol, atol=atol)
         results[str(seed)]['offload_reload'] = dict(matches=offloaded and reloaded['matches']
-            and critic.feature_id == identity_before, reloaded_audit=reloaded)
+            and critic.feature_id == identity_before, all_feature_tensors_offloaded=offloaded,
+            feature_id_preserved=critic.feature_id == identity_before, features=reloaded)
         del original, critic
     report = dict(matches=all(row['audit']['matches'] for result in results.values() for row in result['sequences']),
         model=record['model'], precision='float32 eager, TF32 disabled', rtol=rtol, atol=atol,
@@ -153,7 +189,20 @@ def run_extraction_parity(study, model, original_root, out, *, device='cuda', sa
     report['max_absolute_error'] = max(check.get('max_absolute_error', 0.)
         for result in results.values() for row in result['sequences']
         for check in row['audit']['checks'].values())
-    report['matches'] = report['matches'] and all(result['offload_reload']['matches'] for result in results.values())
+    report['max_absolute_error'] = max(report['max_absolute_error'],
+        max(result['offload_reload']['features'].get('max_absolute_error', 0.) for result in results.values()))
+    category_names = ('source_implementation', 'fixed_shape_causality', 'prefix_execution')
+    report['category_matches'] = {name:all(row['audit']['category_matches'][name]
+        for result in results.values() for row in result['sequences']) for name in category_names}
+    report['category_matches']['offload_reload'] = all(result['offload_reload']['matches'] for result in results.values())
+    report['matches'] = all(report['category_matches'].values())
+    report['failed_checks'] = [dict(seed=seed, sequence=index, check=name, **check)
+        for seed, result in results.items() for index, row in enumerate(result['sequences'])
+        for name, check in row['audit']['checks'].items() if not check['matches']]
+    report['comparison_policy'] = ('Acceptance tolerances are unchanged across categories. '
+        'Source checks use the same sequence extent; fixed-shape causality changes only future tokens; '
+        'prefix execution measures changes in forward length and compressor batch shape; '
+        'offload compares identical API calls before and after CPU/GPU transfer.')
     from .comparison import environment
     report['environment'] = environment()
     write_json(out / 'report.json', report)

@@ -418,3 +418,14 @@ sbatch scripts/import-original-native.sbatch
 
 If those immutable versions already exist, use them; do not rerun publication
 with the same names. Neither audit requires another large training run.
+
+The extraction report separates four checks: `source_implementation` compares
+both implementations at the same sequence extent; `fixed_shape_causality`
+changes only future tokens without changing tensor shapes; `prefix_execution`
+compares full-sequence and shortened-prefix execution; and `offload_reload`
+compares identical API calls before and after transferring the extractor.
+A prefix-execution failure does not imply that offloading failed. All categories
+retain the requested tolerances and contribute to overall acceptance. Failed
+comparisons record reference scale, relative L2 error, failing-element counts,
+and the expected/observed values at the largest absolute difference. Do not
+raise tolerances solely to obtain a passing report.

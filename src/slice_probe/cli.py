@@ -337,7 +337,8 @@ def main():
         from .extraction_parity import run_extraction_parity
         report = run_extraction_parity(args.study, args.model, args.original_root, args.out,
             device=args.device, samples=args.samples, rtol=args.rtol, atol=args.atol)
-        print(json.dumps(dict(matches=report['matches'], report=str(args.out / 'report.json')), indent=2))
+        print(json.dumps(dict(matches=report['matches'], category_matches=report['category_matches'],
+            max_absolute_error=report['max_absolute_error'], report=str(args.out / 'report.json')), indent=2))
         if not report['matches']:
             raise SystemExit(1)
     elif args.command == 'preflight-request':

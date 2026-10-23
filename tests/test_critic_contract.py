@@ -99,7 +99,7 @@ def test_fitting_populations_preserve_ridge_caps(fitted):
     assert ridge['counts']['included'] == lstd['counts']['included'] + 1
 
 
-def test_extraction_parity_command_wiring(original_study, tmp_path):
+def test_extraction_parity_command_wiring(original_study, tmp_path, monkeypatch):
     from slice_probe.extraction_parity import run_extraction_parity
     from slice_probe.io import read_json, write_json, sha256
     study, model, _ = original_study
@@ -130,6 +130,31 @@ def test_extraction_parity_command_wiring(original_study, tmp_path):
     assert report['max_absolute_error'] < 1e-5
     assert len(report['results']['7']['sequences']) == 2
     assert read_json(out / 'report.json')['original_code_sha256']
+    from slice_probe import extraction_parity
+    original_audit = extraction_parity.audit_sequence
+    def prefix_roundoff(*args, **kwargs):
+        result = original_audit(*args, **kwargs)
+        result['matches'] = False
+        result['category_matches']['prefix_execution'] = False
+        return result
+    monkeypatch.setattr(extraction_parity, 'audit_sequence', prefix_roundoff)
+    failed = run_extraction_parity(study, model, root, tmp_path / 'prefix-failure', device='cpu', samples=2)
+    assert not failed['matches']
+    assert not failed['category_matches']['prefix_execution']
+    assert failed['category_matches']['source_implementation']
+    assert failed['category_matches']['fixed_shape_causality']
+    assert failed['category_matches']['offload_reload']
+
+
+def test_audit_diagnostics_keep_strict_tolerances():
+    from slice_probe.extraction_parity import numerical_comparison
+    reference = np.array([0., 100.], dtype=np.float32)
+    actual = np.array([2e-5, 100.], dtype=np.float32)
+    check = numerical_comparison(reference, actual, rtol=1e-4, atol=1e-5)
+    assert not check['matches']
+    assert check['outside_tolerance'] == 1
+    assert check['worst_absolute']['index'] == [0]
+    assert check['relative_l2_error'] < 1e-6
 
 
 def test_failed_reload_leaves_coherent_cpu_extractor(fitted, monkeypatch):
