@@ -155,6 +155,12 @@ python -m slice_probe layers --num-layers 28 --layer-base 2 --num-slices 5
 # {"layers": [28, 27, 25, 21, 13]}
 ```
 
+## Accuracy Results 
+
+The closer the points are to the dashed line, the closer the predictions are to the Monte Carlo estimates. SLICE/token achieves an average absolute error of 0.245, essentially matching the full transformer critic’s 0.245. SLICE/chunk has the lowest observed error at 0.237. This suggests that compact SLICE features preserve useful information for value prediction, even when fitting only at chunk boundaries.
+
+![MAE Results](docs/figures/comparison.png)
+
 ## Further reading
 
 - Zhu et al., [The LLM Already Knows](https://arxiv.org/abs/2509.12886).
